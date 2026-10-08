@@ -20,6 +20,9 @@ namespace LV.SignFlow.Application.Templates.Dtos
         public DateTimeOffset? CreatedAt { get; set; }
 
         public DateTimeOffset? UpdatedAt { get; set; }
+        public bool IsOwner { get; set; }
+
+        public TemplateAccessLevel EffectiveAccessLevel { get; set; }
 
     }
 }

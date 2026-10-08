@@ -22,5 +22,17 @@ namespace LV.SignFlow.Application.Templates.Dtos
         public DateTimeOffset? CreatedAt { get; set; }
 
         public DateTimeOffset? UpdatedAt { get; set; }
+
+        public Guid LatestVersionId { get; set; }
+
+        public bool LatestVersionIsPublished { get; set; }
+
+        public bool HasDraftVersion { get; set; }
+
+        public int? LatestPublishedVersionNumber { get; set; }
+
+        public bool IsOwner { get; set; }
+
+        public TemplateAccessLevel EffectiveAccessLevel { get; set; }
     }
 }

@@ -17,6 +17,7 @@
   <ItemGroup>
     <Folder Include="Identity\" />
     <Folder Include="Integrations\Microsoft\" />
+    <Folder Include="Storage\" />
     <Folder Include="Pdf\" />
     <Folder Include="Notifications\" />
   </ItemGroup>

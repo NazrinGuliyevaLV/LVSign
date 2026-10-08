@@ -11,5 +11,7 @@ namespace LV.SignFlow.Application.Templates
 
         Task<IReadOnlyList<Template>> GetAllForOrganizationAsync(Guid organizationId, CancellationToken cancellationToken = default);
         Task<Template?> GetByIdForOrganizationAsync(Guid id,Guid organizationId, CancellationToken cancellationToken = default);
+        Task<IReadOnlyList<Template>> GetOwnedByUserAsync(Guid organizationId,Guid userId, CancellationToken cancellationToken = default);
+        Task<IReadOnlyList<Template>> GetSharedByUserAsync(Guid organizationId, Guid userId, Guid? departmentId, CancellationToken cancellationToken = default);
     }
 }
