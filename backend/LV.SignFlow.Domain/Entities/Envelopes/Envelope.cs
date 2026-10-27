@@ -16,6 +16,7 @@ namespace LV.SignFlow.Domain.Entities.Envelopes
         public EnvelopeType Type { get; set; } = EnvelopeType.Standart;
         public EnvelopeStatus Status { get; set; } = EnvelopeStatus.Draft;
         public Guid CreatedByUserId { get; set; }
+        public int? CurrentRoutingOrder { get; set; }
 
         //envelope template-den create olunubsa source bilmek ucun
         public Guid? SourceTemplateVersionId { get; set; }
@@ -29,7 +30,7 @@ namespace LV.SignFlow.Domain.Entities.Envelopes
         public bool IsDeleted { get; set; }
         public Guid OrganizationId { get; set; }
 
-
+        public int? ReminderIntervalDays { get; set; }
         public User CreatedByUser { get; set; } = null!;
         public Organization Organization { get; set; } = null!;
         public TemplateVersion? SourceTemplateVersion { get; set; }

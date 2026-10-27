@@ -41,10 +41,12 @@ namespace LV.SignFlow.Infrastructure.Persistence.Configurations
             builder.HasIndex(x => x.OrganizationId);
             builder.HasIndex(x => x.CreatedByUserId);
 
+          
             builder.HasIndex(x => new
             {
                 x.OrganizationId,
-                x.Status
+                x.Status,
+                x.CurrentRoutingOrder
             });
 
 

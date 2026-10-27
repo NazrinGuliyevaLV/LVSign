@@ -11,7 +11,7 @@ namespace LV.SignFlow.Application.Templates.Dtos
 
         public Guid TemplateDocumentId { get; set; }
 
-        public Guid RecipientRoleId { get; set; }
+        public Guid? RecipientRoleId { get; set; }
 
         public FieldType FieldType { get; set; }
 

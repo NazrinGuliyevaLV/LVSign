@@ -41,6 +41,8 @@ namespace LV.SignFlow.Infrastructure.Persistence.Configurations
                 .HasForeignKey(e=>e.EnvelopeId)
                 .OnDelete(DeleteBehavior.Cascade);
 
+            builder.HasIndex(x => x.SourceTemplateDocumentId);
+
             builder.HasIndex(x => new
             {
                 x.EnvelopeId,

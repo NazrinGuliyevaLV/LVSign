@@ -14,6 +14,8 @@ namespace LV.SignFlow.Infrastructure.Persistence.Configurations
             builder.ToTable("EnvelopeFields");
             builder.HasKey(x => x.Id);
 
+            builder.Property(x => x.Label).HasMaxLength(200);
+                
             builder.Property(x => x.X)
         .HasPrecision(9, 6);
 
@@ -25,9 +27,6 @@ namespace LV.SignFlow.Infrastructure.Persistence.Configurations
 
             builder.Property(x => x.Height)
                 .HasPrecision(9, 6);
-
-            builder.Property(x => x.Value)
-                .HasMaxLength(4000);
 
             builder.HasOne(x => x.Envelope)
                 .WithMany(x => x.Fields)
@@ -43,6 +42,7 @@ namespace LV.SignFlow.Infrastructure.Persistence.Configurations
                 .WithMany(x => x.Fields)
                 .HasForeignKey(x => x.EnvelopeRecipientId)
                 .OnDelete(DeleteBehavior.Restrict);
+            builder.HasIndex(x => x.SourceTemplateFieldId);
 
             builder.HasIndex(x => x.EnvelopeId);
             builder.HasIndex(x => x.EnvelopeDocumentId);

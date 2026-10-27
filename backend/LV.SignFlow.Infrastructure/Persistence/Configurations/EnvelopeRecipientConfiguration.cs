@@ -15,7 +15,9 @@ namespace LV.SignFlow.Infrastructure.Persistence.Configurations
             builder.ToTable("EnvelopeRecipients");
 
             builder.HasKey(e => e.Id);
-
+            builder.Property(x => x.RoleName)
+    .IsRequired()
+    .HasMaxLength(100);
             builder.Property(x => x.Name)
            .IsRequired()
            .HasMaxLength(200);
@@ -39,11 +41,18 @@ namespace LV.SignFlow.Infrastructure.Persistence.Configurations
 
             builder.HasIndex(e => e.EnvelopeId);
             builder.HasIndex(e => e.UserId);
+            builder.HasIndex(x => new
+            {
+                x.UserId,
+                x.Status
+            });
+            builder.HasIndex(x =>x.SourceTemplateRecipientRoleId);
 
             builder.HasIndex(x => new
             {
                 x.EnvelopeId,
-                x.RoutingOrder
+                x.RoutingOrder,
+                x.Status
             });
         }
     }

@@ -27,7 +27,7 @@ namespace LV.SignFlow.Domain.Entities.Envelopes
         public int Order { get; set; }
 
         public int? PageCount { get; set; }
-
+        public Guid? SourceTemplateDocumentId { get; set; }
         public DateTimeOffset CreatedAt { get; set; }
 
         public ICollection<Fields> EnvelopeFields { get; set; }

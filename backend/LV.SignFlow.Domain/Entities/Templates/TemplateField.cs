@@ -11,7 +11,7 @@ namespace LV.SignFlow.Domain.Entities.Templates
 
         public Guid TemplateDocumentId { get; set; }
 
-        public Guid RecipientRoleId { get; set; }
+        public Guid? RecipientRoleId { get; set; }
 
         public FieldType FieldType { get; set; }
 
@@ -30,7 +30,8 @@ namespace LV.SignFlow.Domain.Entities.Templates
 
         public TemplateDocument TemplateDocument { get; set; } = null!;
 
-        public TemplateRecipientRole RecipientRole { get; set; } = null!;
+        public TemplateRecipientRole? RecipientRole { get; set; } = null!;
+        public FieldOwnerType OwnerType { get; set; }= FieldOwnerType.Recipient;
         public ICollection<TemplateRoutingCondition> TemplateRoutingConditions { get; set; }
     = new List<TemplateRoutingCondition>();
     }

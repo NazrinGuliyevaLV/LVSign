@@ -16,12 +16,13 @@ namespace LV.SignFlow.Application.Templates.Dtos
         public TemplateStatus Status { get; set; }
 
         public int LatestVersionNumber { get; set; }
+        public bool LatestVersionIsPublished { get; set; }
 
         public DateTimeOffset? CreatedAt { get; set; }
 
         public DateTimeOffset? UpdatedAt { get; set; }
         public bool IsOwner { get; set; }
-
+        public bool HasDraftVersion { get; set; }
         public TemplateAccessLevel EffectiveAccessLevel { get; set; }
 
     }

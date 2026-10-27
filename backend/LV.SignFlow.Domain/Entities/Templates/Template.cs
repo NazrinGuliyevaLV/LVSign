@@ -14,7 +14,7 @@ namespace LV.SignFlow.Domain.Entities.Templates
         public string? Description { get; set; }
         public Guid OwnerUserId { get; set; }
         public TemplateStatus Status { get; set; } = TemplateStatus.Draft;
-
+        public TemplateCategory? Category { get; set; }
         public bool IsDeleted { get; set; }
         public  DateTimeOffset? DeletedAt { get; set; }
         public DateTimeOffset? CreatedAt { get; set; }

@@ -77,5 +77,15 @@ namespace LV.SignFlow.Infrastructure.Persistence.Repositories
         .ToListAsync(cancellationToken);
 
         }
+
+        public async Task<IReadOnlyList<Template>> GetAccessibleAsync(Guid organizationId, Guid userId, Guid? departmentId, CancellationToken cancellationToken = default)
+        {
+            return await GetTemplateQuery()
+                .Where(x => x.OrganizationId == organizationId && x.OwnerUserId != userId &&
+                x.Shares.Any(S => S.SharedWithUserId == userId || (
+                 (departmentId.HasValue && S.SharedWithDepartmentId==departmentId.Value))))
+        .OrderByDescending(x => x.UpdatedAt)
+        .ToListAsync(cancellationToken);
+        }
     }
 }

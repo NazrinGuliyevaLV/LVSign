@@ -51,6 +51,11 @@ namespace LV.SignFlow.Application.Templates
         Task<TemplateRoutingConditionDto> UpdateRoutingConditionsAsync(Guid templateId, Guid ruleId, Guid ruleSetId, Guid conditionId, TemplateRoutingConditionRequest request, CancellationToken cancellationToken = default);
         Task DeleteRoutingConditionsAsync(Guid templateId, Guid ruleId, Guid ruleSetId, Guid conditionId,  CancellationToken cancellationToken = default);
 
+        //share template
+        Task<IReadOnlyList<TemplateShareDto>> GetSharesAsync(Guid templateId,CancellationToken cancellationToken = default);
+        Task<TemplateShareDto> AddShareAsync(Guid templateId,TemplateShareRequest request,CancellationToken cancellationToken = default);
+        Task<TemplateShareDto> UpdateShareAsync(Guid templateId,Guid shareId,TemplateShareRequest request,CancellationToken cancellationToken = default);
+        Task DeleteShareAsync(Guid templateId,Guid shareId,CancellationToken cancellationToken = default);
 
 
     }

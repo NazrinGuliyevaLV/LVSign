@@ -361,7 +361,7 @@ namespace LV.SignFlow.Api.Controllers
             }
         }
 
-        [HttpGet("{templateId:guid}/documents/{documentId:guid}/")]
+        [HttpGet("{templateId:guid}/documents/{documentId:guid}/content")]
         [Produces("application/pdf")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -879,7 +879,135 @@ namespace LV.SignFlow.Api.Controllers
                 return Conflict(ex.Message);
             }
         }
+        [HttpGet("my")]
+        [ProducesResponseType(
+    typeof(IReadOnlyList<TemplateListItemDto>),
+    StatusCodes.Status200OK)]
+        public async Task<
+    ActionResult<IReadOnlyList<TemplateListItemDto>>>
+    GetMyTemplates(
+        CancellationToken cancellationToken)
+        {
+            var templates =
+                await templateService.GetMyTemplatesAsync(
+                    cancellationToken);
+
+            return Ok(templates);
+        }
+
+        [HttpGet("shared-with-me")]
+        [ProducesResponseType(
+    typeof(IReadOnlyList<TemplateListItemDto>),
+    StatusCodes.Status200OK)]
+        public async Task<
+    ActionResult<IReadOnlyList<TemplateListItemDto>>>
+    GetSharedWithMe(
+        CancellationToken cancellationToken)
+        {
+            var templates =
+                await templateService.GetSharedWithMeAsync(
+                    cancellationToken);
+
+            return Ok(templates);
+        }
 
 
+        [HttpPost("{templateId:guid}/shares")]
+        public async Task<IActionResult> AddShare(
+    Guid templateId,
+    TemplateShareRequest request,
+    CancellationToken cancellationToken)
+        {
+            try
+            {
+                var result =
+                    await templateService.AddShareAsync(
+                        templateId,
+                        request,
+                        cancellationToken);
+
+                return StatusCode(
+                    StatusCodes.Status201Created,
+                    result);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Conflict(ex.Message);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+        }
+
+        [HttpPut(
+    "{templateId:guid}/shares/{shareId:guid}")]
+        public async Task<IActionResult> UpdateShare(
+    Guid templateId,
+    Guid shareId,
+    TemplateShareRequest request,
+    CancellationToken cancellationToken)
+        {
+            try
+            {
+                return Ok(
+                    await templateService.UpdateShareAsync(
+                        templateId,
+                        shareId,
+                        request,
+                        cancellationToken));
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ex.Message);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+        }
+        [HttpDelete(
+    "{templateId:guid}/shares/{shareId:guid}")]
+        public async Task<IActionResult> DeleteShare(
+    Guid templateId,
+    Guid shareId,
+    CancellationToken cancellationToken)
+        {
+            try
+            {
+                await templateService.DeleteShareAsync(
+                    templateId,
+                    shareId,
+                    cancellationToken);
+
+                return NoContent();
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+        }
+
+        [HttpGet("{templateId:guid}/shares")]
+        public async Task<IActionResult> GetShares(
+    Guid templateId,
+    CancellationToken cancellationToken)
+        {
+            try
+            {
+                return Ok(
+                    await templateService.GetSharesAsync(
+                        templateId,
+                        cancellationToken));
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+        }
     }
 }

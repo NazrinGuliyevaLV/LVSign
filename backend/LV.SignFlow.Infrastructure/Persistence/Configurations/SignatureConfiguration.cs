@@ -26,9 +26,13 @@ namespace LV.SignFlow.Infrastructure.Persistence.Configurations
 
             builder.HasIndex(x => x.UserId);
 
-            builder.HasIndex(x => x.UserId)
-                .IsUnique()
-                .HasFilter("[IsDefault] = 1 AND [IsActive] = 1");
+            builder.HasIndex(x => new
+            {
+                x.UserId,
+                x.Kind
+            })
+.IsUnique()
+.HasFilter("[IsDefault] = 1 AND [IsActive] = 1");
         }
     }
 }

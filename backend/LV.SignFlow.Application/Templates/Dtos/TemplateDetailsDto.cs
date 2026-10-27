@@ -14,6 +14,7 @@ namespace LV.SignFlow.Application.Templates.Dtos
         public string? Description { get; set; }
 
         public TemplateStatus Status { get; set; }
+        public TemplateCategory? Category { get; set; }
 
         public Guid OwnerUserId { get; set; }
 

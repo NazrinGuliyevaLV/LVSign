@@ -19,7 +19,7 @@ namespace LV.SignFlow.Infrastructure.Persistence
         }
         public DbSet<Organization> Organizations=>Set<Organization>();
         public DbSet<Department> Departments=>Set<Department>();
-
+        public DbSet<EnvelopeFieldValue> EnvelopeFieldValues=> Set<EnvelopeFieldValue>();
         public DbSet<Template> Templates=>Set<Template>();
         public DbSet<TemplateDocument> TemplateDocuments=>Set<TemplateDocument>();
         public DbSet<TemplateField> TemplateFields=>Set<TemplateField>();
@@ -60,6 +60,7 @@ namespace LV.SignFlow.Infrastructure.Persistence
         public DbSet<Stamps> Stamps => Set<Stamps>();
         public DbSet<Signature> Signatures => Set<Signature>();
         public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+        public DbSet<EnvelopeAppliedSignature> EnvelopeAppliedSignatures => Set<EnvelopeAppliedSignature>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

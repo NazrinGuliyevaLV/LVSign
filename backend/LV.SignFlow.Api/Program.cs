@@ -1,6 +1,7 @@
 
 using LV.SignFlow.Api.Authentification;
 using LV.SignFlow.Application.Common.Interfaces;
+using LV.SignFlow.Application.Envelopes;
 using LV.SignFlow.Application.Templates;
 using LV.SignFlow.Infrastructure;
 using LV.SignFlow.Infrastructure.Persistence;
@@ -15,7 +16,24 @@ builder.Services.AddSwaggerGen();
 
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddScoped<ITemplateService, TemplateService>();
+builder.Services.AddScoped<IEnvelopeService, EnvelopeService>();
 builder.Services.AddScoped<IFileStorage,LocalFileStorage>();
+
+
+const string FrontentCorsPolicy = "FrontendCors";
+
+var allowedOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>() ?? Array.Empty<string>();
+
+builder.Services.AddCors(opt =>
+{
+    opt.AddPolicy(FrontentCorsPolicy,
+        policy =>
+        policy.WithOrigins(allowedOrigins)
+        .AllowAnyHeader()
+        .AllowAnyMethod());
+});
 
 if (builder.Environment.IsDevelopment())
 {
@@ -46,7 +64,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.MapControllers();
-
+app.UseCors(FrontentCorsPolicy);
 app.Run();
 
 

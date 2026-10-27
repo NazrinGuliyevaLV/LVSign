@@ -9,7 +9,7 @@ namespace LV.SignFlow.Application.Templates.Requests
     {
         public Guid TemplateDocumentId { get; set; }
 
-        public Guid RecipientRoleId { get; set; }
+        public Guid? RecipientRoleId { get; set; }
 
         public FieldType FieldType { get; set; }
 
@@ -24,5 +24,7 @@ namespace LV.SignFlow.Application.Templates.Requests
         public decimal Height { get; set; }
 
         public bool IsRequired { get; set; } = true;
+        public FieldOwnerType OwnerType { get; set; }
+    = FieldOwnerType.Recipient;
     }
 }

@@ -38,7 +38,7 @@ namespace LV.SignFlow.Infrastructure.Persistence.Repositories
 
         }
 
-        public async Task<T?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+        public async Task<T?> GetByIdAsync(Guid? id, CancellationToken cancellationToken = default)
         {
             return await dbSet.FindAsync(new object?[] { id }, cancellationToken);
         }

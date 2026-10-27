@@ -25,9 +25,10 @@ namespace LV.SignFlow.Application.Templates
         private readonly IRepository<TemplateRoutingRuleSet> _templateRoutingRuleSetRepository;
         private readonly IRepository<TemplateRoutingRule> _templateRoutingRuleRepository;
         private readonly IRepository<TemplateRoutingCondition> _templateRoutingConditionRepository;
+        private readonly IRepository<TemplateShare> _templateShareRepository;
         private readonly IRepository<User> _userRepository;
 
-        public TemplateService(ITemplateRepository templateRepository, ICurrentUser curentUser, IUnitOfWork unitOfWork, IFileStorage fileStorage, IRepository<TemplateRecipientRole> recipientRoleRepository, IRepository<TemplateDocument> templateDocumentRepository, IRepository<User> userRepository, IRepository<TemplateField> templateFieldRepository, IRepository<TemplateRoutingRuleSet> templateRoutingRuleSetRepository = null, IRepository<TemplateRoutingRule> templateRoutingRuleRepository = null, IRepository<TemplateRoutingCondition> templateRoutingConditionRepository = null)
+        public TemplateService(ITemplateRepository templateRepository, ICurrentUser curentUser, IUnitOfWork unitOfWork, IFileStorage fileStorage, IRepository<TemplateRecipientRole> recipientRoleRepository, IRepository<TemplateDocument> templateDocumentRepository, IRepository<User> userRepository, IRepository<TemplateField> templateFieldRepository, IRepository<TemplateRoutingRuleSet> templateRoutingRuleSetRepository = null, IRepository<TemplateRoutingRule> templateRoutingRuleRepository = null, IRepository<TemplateRoutingCondition> templateRoutingConditionRepository = null, IRepository<TemplateShare> templateShareRepository = null)
         {
             _templateRepository = templateRepository;
             _currentUser = curentUser;
@@ -40,6 +41,7 @@ namespace LV.SignFlow.Application.Templates
             _templateRoutingRuleSetRepository = templateRoutingRuleSetRepository;
             _templateRoutingRuleRepository = templateRoutingRuleRepository;
             _templateRoutingConditionRepository = templateRoutingConditionRepository;
+            _templateShareRepository = templateShareRepository;
         }
 
         private void EnsureAuthenticated()
@@ -68,9 +70,11 @@ namespace LV.SignFlow.Application.Templates
                 OrganizationId = _currentUser.OrganizationId,
                 OwnerUserId = _currentUser.UserId,
                 Status = TemplateStatus.Draft,
+                Category= request.Category,
                 IsDeleted = false,
                 CreatedAt = now,
-                UpdatedAt = now
+                UpdatedAt = now,
+               
             };
             var version = new TemplateVersion
             {
@@ -94,18 +98,23 @@ namespace LV.SignFlow.Application.Templates
         public async Task<IReadOnlyList<TemplateListItemDto>> GetAllAsync(CancellationToken cancellationToken = default)
         {
             EnsureAuthenticated();
-            var templates = await _templateRepository.GetAllForOrganizationAsync(_currentUser.OrganizationId, cancellationToken);
+            var departmentId =
+           await GetCurrentDepartmentIdAsync(
+               cancellationToken);
 
-            return templates.Select(x => new TemplateListItemDto
-            {
-                Id = x.Id,
-                Name = x.Name,
-                Description = x.Description,
-                Status = x.Status,
-                LatestVersionNumber = x.Versions.Count == 0 ? 0 : x.Versions.Max(x => x.VersionNumber),
-                CreatedAt = x.CreatedAt,
-                UpdatedAt = x.UpdatedAt,
-            }).ToList();
+            var templates =
+                await _templateRepository.GetAccessibleAsync(
+                    _currentUser.OrganizationId,
+                    _currentUser.UserId,
+                    departmentId,
+                    cancellationToken);
+
+            return templates
+                .Select(x =>
+                    MapTemplateListItem(
+                        x,
+                        departmentId))
+                .ToList();
         }
 
         public async Task<TemplateDetailsDto?> GetByIdAsync(Guid Id, CancellationToken cancellationToken = default)
@@ -125,6 +134,7 @@ namespace LV.SignFlow.Application.Templates
                 CreatedAt = template.CreatedAt,
                 UpdatedAt = template.UpdatedAt,
                 OwnerUserId = template.OwnerUserId,
+                Category= template.Category,
                 LatestVersionNumber = template.Versions.Count == 0 ? 0 :
                 template.Versions.Max(x => x.VersionNumber),
 
@@ -415,9 +425,16 @@ namespace LV.SignFlow.Application.Templates
             EnsureAuthenticated();
 
             if (templateFieldRequest.TemplateDocumentId == Guid.Empty) throw new ArgumentException("Template document is requied");
-            if (templateFieldRequest.RecipientRoleId == Guid.Empty) throw new ArgumentException("Recipient role is requied");
             if (templateFieldRequest.PageNumber <=0) throw new ArgumentException("Page number must be greater than zero.");
-             
+
+            if (templateFieldRequest.OwnerType == FieldOwnerType.Recipient && !templateFieldRequest.RecipientRoleId.HasValue)
+                throw new ArgumentException( "Recipient role is required for recipient-owned fields.");
+            
+
+            if (templateFieldRequest.OwnerType != FieldOwnerType.Recipient &&  templateFieldRequest.RecipientRoleId.HasValue)
+                throw new ArgumentException("Only recipient-owned fields can have a recipient role.");
+           
+
             ValidateNormalizedCoordinates(templateFieldRequest);
             var template =
         await _templateRepository.GetByIdForOrganizationAsync(
@@ -1347,7 +1364,8 @@ namespace LV.SignFlow.Application.Templates
                     latestPublishedVersionNumber,
 
                 CreatedAt = template.CreatedAt,
-                UpdatedAt = template.UpdatedAt
+                UpdatedAt = template.UpdatedAt,
+                Category = template.Category
             };
 
 
@@ -1842,14 +1860,231 @@ namespace LV.SignFlow.Application.Templates
             return user.DepartmentId;
         }
 
-        public Task<IReadOnlyList<TemplateListItemDto>> GetSharedWithMeAsync(CancellationToken cancellationToken = default)
+        private TemplateListItemDto MapTemplateListItem(Template template,Guid? departmentId)
         {
-            throw new NotImplementedException();
+            var lastVersion=template.Versions.OrderByDescending(x=>x.VersionNumber).First();
+
+            var effectiveAccess = CalculateEffectiveAccessLevel(template, _currentUser.UserId, departmentId);
+            if(!effectiveAccess.HasValue) throw new InvalidOperationException(
+            "Accessible template has no effective access.");
+
+            return new TemplateListItemDto
+            {
+                Id = template.Id,
+                Name = template.Name,
+                Description = template.Description,
+                Status = template.Status,
+                LatestVersionNumber =lastVersion.VersionNumber,
+
+                LatestVersionIsPublished =lastVersion.IsPublished,
+
+                HasDraftVersion =
+            template.Versions.Any(
+                x => !x.IsPublished),
+
+                IsOwner =template.OwnerUserId ==  _currentUser.UserId,
+
+                EffectiveAccessLevel =effectiveAccess.Value,
+
+                CreatedAt = template.CreatedAt,
+                UpdatedAt = template.UpdatedAt
+            };
+
+        }
+        public async Task<IReadOnlyList<TemplateListItemDto>> GetSharedWithMeAsync(CancellationToken cancellationToken = default)
+        {
+            EnsureAuthenticated();
+
+            var departmentId =
+                await GetCurrentDepartmentIdAsync(
+                    cancellationToken);
+
+            var templates =
+                await _templateRepository.GetSharedByUserAsync(
+                    _currentUser.OrganizationId,
+                    _currentUser.UserId,
+                    departmentId,
+                    cancellationToken);
+
+            return templates
+                .Select(x =>
+                    MapTemplateListItem(
+                        x,
+                        departmentId))
+                .ToList();
         }
 
-        public Task<IReadOnlyList<TemplateListItemDto>> GetMyTemplatesAsync(CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<TemplateListItemDto>> GetMyTemplatesAsync(CancellationToken cancellationToken = default)
         {
-            throw new NotImplementedException();
+            EnsureAuthenticated();
+
+            var templates =
+                await _templateRepository.GetOwnedByUserAsync(
+                    _currentUser.OrganizationId,
+                    _currentUser.UserId,
+                    cancellationToken);
+
+            return templates
+                .Select(x =>
+                    MapTemplateListItem(
+                        x,
+                        null))
+                .ToList();
+        }
+
+        public async Task<IReadOnlyList<TemplateShareDto>> GetSharesAsync(Guid templateId, CancellationToken cancellationToken = default)
+        {
+            EnsureAuthenticated();
+
+            var template =
+                await _templateRepository.GetByIdForOrganizationAsync(templateId,_currentUser.OrganizationId,cancellationToken);
+
+            if (template is null)
+                throw new KeyNotFoundException();
+            var shares =await _templateShareRepository.FindAsync(x => x.TemplateId == templateId,cancellationToken);
+            return shares
+       .Select(x => new TemplateShareDto
+       {
+           Id = x.Id,
+           TemplateId = x.TemplateId,
+           SharedWithUserId = x.SharedWithUserId,
+           SharedWithDepartmentId =
+               x.SharedWithDepartmentId,
+           AccessLevel = x.AccessLevel,
+           SharedByUserId = x.SharedByUserId,
+           SharedAt = x.SharedAt
+       })
+       .ToList();
+        }
+
+        public async Task<TemplateShareDto> AddShareAsync(Guid templateId, TemplateShareRequest request, CancellationToken cancellationToken = default)
+        {
+            EnsureAuthenticated();
+
+            var template =
+                await _templateRepository.GetByIdForOrganizationAsync(templateId, _currentUser.OrganizationId, cancellationToken);
+
+            if (template is null)
+                throw new KeyNotFoundException();
+            var existingShares =
+      await _templateShareRepository.FindAsync(
+          x =>
+              x.TemplateId == templateId &&
+              (
+                  x.SharedWithUserId ==
+                      request.SharedWithUserId ||
+                  x.SharedWithDepartmentId ==
+                      request.SharedWithDepartmentId
+              ),
+          cancellationToken);
+
+            if (existingShares.Count > 0)
+                throw new InvalidOperationException(
+                    "This template is already shared with this target.");
+
+            var share = new TemplateShare
+            {
+                Id = Guid.NewGuid(),
+                TemplateId = templateId,
+                SharedWithUserId =
+                    request.SharedWithUserId,
+                SharedWithDepartmentId =
+                    request.SharedWithDepartmentId,
+                AccessLevel = request.AccessLevel,
+                SharedByUserId = _currentUser.UserId,
+                SharedAt = DateTimeOffset.UtcNow
+            };
+
+            await _templateShareRepository.AddAsync(
+                share,
+                cancellationToken);
+
+            await _unitOfWork.SaveChangesAsync(
+                cancellationToken);
+
+            return new TemplateShareDto
+            {
+                Id = share.Id,
+                TemplateId = share.TemplateId,
+                SharedWithUserId =
+                    share.SharedWithUserId,
+                SharedWithDepartmentId =
+                    share.SharedWithDepartmentId,
+                AccessLevel = share.AccessLevel,
+                SharedByUserId =
+                    share.SharedByUserId,
+                SharedAt = share.SharedAt
+            };
+        }
+
+        public async Task<TemplateShareDto> UpdateShareAsync(Guid templateId, Guid shareId, TemplateShareRequest request, CancellationToken cancellationToken = default)
+        {
+            EnsureAuthenticated();
+
+            var template =
+                await _templateRepository.GetByIdForOrganizationAsync(templateId, _currentUser.OrganizationId, cancellationToken);
+
+            if (template is null)
+                throw new KeyNotFoundException();
+            var share =
+           await _templateShareRepository.GetByIdAsync(
+               shareId,
+               cancellationToken);
+
+            if (share is null ||
+                share.TemplateId != templateId)
+            {
+                throw new KeyNotFoundException();
+            }
+
+            share.SharedWithUserId =
+                request.SharedWithUserId;
+
+            share.SharedWithDepartmentId =
+                request.SharedWithDepartmentId;
+
+            share.AccessLevel =
+                request.AccessLevel;
+
+            _templateShareRepository.Update(share);
+
+            await _unitOfWork.SaveChangesAsync(
+                cancellationToken);
+
+            return new TemplateShareDto
+            {
+                Id = share.Id,
+                TemplateId = share.TemplateId,
+                SharedWithUserId =
+                    share.SharedWithUserId,
+                SharedWithDepartmentId =
+                    share.SharedWithDepartmentId,
+                AccessLevel = share.AccessLevel,
+                SharedByUserId =
+                    share.SharedByUserId,
+                SharedAt = share.SharedAt
+            };
+        }
+
+        public async Task DeleteShareAsync(Guid templateId, Guid shareId, CancellationToken cancellationToken = default)
+        {
+            EnsureAuthenticated();
+
+            var share =
+                await _templateShareRepository.GetByIdAsync(
+                    shareId,
+                    cancellationToken);
+
+            if (share is null ||
+                share.TemplateId != templateId)
+            {
+                throw new KeyNotFoundException();
+            }
+
+            _templateShareRepository.Delete(share);
+
+            await _unitOfWork.SaveChangesAsync(
+                cancellationToken);
         }
     }
 }

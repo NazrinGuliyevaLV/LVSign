@@ -6,12 +6,14 @@ namespace LV.SignFlow.Domain.Enums.EnvelopeEnums
 {
     public enum RecipientStatus
     {
-        Pending=1,
-        Sent=2,
-        Viewed=3,
-        Completed=4,
-        Declined=5,
-        WaitingForCondition=6,
-        Skipped=7
+        Created = 1,
+        Pending = 2,
+        Active = 3,
+        Viewed = 4,
+        Completed = 5,
+        Declined = 6,
+        Delegated = 7,
+        Skipped = 8,
+        Canceled = 9
     }
 }

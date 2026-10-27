@@ -17,13 +17,20 @@ namespace LV.SignFlow.Domain.Entities.Envelopes
 
         public string Email { get; set; } = string.Empty;
 
-        public RecipientType RecipientType { get; set; }
-            = RecipientType.Signer;
+        public RecipientType RecipientType { get; set; } = RecipientType.Signer;
 
-        public RecipientStatus Status { get; set; }
-            = RecipientStatus.Pending;
+        public RecipientStatus Status { get; set; }= RecipientStatus.Created;
 
         public int RoutingOrder { get; set; }
+        public string RoleName { get; set; } = string.Empty;
+
+        public bool IsRequired { get; set; } = true;
+
+        public DateTimeOffset? ActivatedAt { get; set; }
+
+        public DateTimeOffset? DueAt { get; set; }
+
+        public DateTimeOffset? CanceledAt { get; set; }
 
         public DateTimeOffset? SentAt { get; set; }
 
@@ -40,7 +47,7 @@ namespace LV.SignFlow.Domain.Entities.Envelopes
         public bool AllowSenderDeleteRecipient { get; set; } = true;
 
         public bool AllowSenderChangeRoutingOrder { get; set; } = true;
-
+        public Guid? SourceTemplateRecipientRoleId { get; set; }
 
         public Envelope Envelope { get; set; } = null!;
 

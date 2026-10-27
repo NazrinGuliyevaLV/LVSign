@@ -22,6 +22,7 @@ namespace LV.SignFlow.Infrastructure.Persistence.Configurations
 
             builder.HasIndex(x=>x.Name)
                 .IsUnique();
+            builder.Property(x => x.Category);
 
             builder.HasOne(x => x.Organization)
                 .WithMany(x => x.Templates)
