@@ -14,6 +14,8 @@ namespace LV.SignFlow.Domain.Enums.EnvelopeEnums
         Declined = 6,
         Delegated = 7,
         Skipped = 8,
-        Canceled = 9
+        Canceled = 9,
+        WaitingForCondition=10,
+        Sent=11,
     }
 }

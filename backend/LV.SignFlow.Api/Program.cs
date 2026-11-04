@@ -2,6 +2,7 @@
 using LV.SignFlow.Api.Authentification;
 using LV.SignFlow.Application.Common.Interfaces;
 using LV.SignFlow.Application.Envelopes;
+using LV.SignFlow.Application.Signing;
 using LV.SignFlow.Application.Templates;
 using LV.SignFlow.Infrastructure;
 using LV.SignFlow.Infrastructure.Persistence;
@@ -17,6 +18,7 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddScoped<ITemplateService, TemplateService>();
 builder.Services.AddScoped<IEnvelopeService, EnvelopeService>();
+builder.Services.AddScoped<ISigningService, SigningService>();
 builder.Services.AddScoped<IFileStorage,LocalFileStorage>();
 
 

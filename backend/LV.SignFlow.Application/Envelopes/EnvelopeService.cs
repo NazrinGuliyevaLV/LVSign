@@ -1,6 +1,7 @@
 ﻿using LV.SignFlow.Application.Common.Interfaces;
 using LV.SignFlow.Application.Envelopes.Dtos;
 using LV.SignFlow.Application.Envelopes.Requests;
+using LV.SignFlow.Application.Signing.Dtos;
 using LV.SignFlow.Application.Templates;
 using LV.SignFlow.Domain.Entities.Envelopes;
 using LV.SignFlow.Domain.Entities.Signing;
@@ -623,9 +624,31 @@ namespace LV.SignFlow.Application.Envelopes
             }
 
             var roleName =
-              string.IsNullOrWhiteSpace(request.RoleName) ?
-              GetDefaultRoleName(request.RecipientType) :
-              request.RoleName.Trim();
+    string.IsNullOrWhiteSpace(request.RoleName)
+        ? GetDefaultRoleName(request.RecipientType)
+        : request.RoleName.Trim();
+
+            var existingRecipients =
+    await _envelopeRecipient.FindAsync(
+        x => x.EnvelopeId == envelopeId,
+        cancellationToken);
+
+            var duplicateRecipient =
+    existingRecipients.Any(x =>
+        string.Equals(
+            x.Email?.Trim(),
+            user.Email?.Trim(),
+            StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(
+            x.RoleName?.Trim(),
+            roleName,
+            StringComparison.OrdinalIgnoreCase));
+
+            if (duplicateRecipient)
+            {
+                throw new InvalidOperationException(
+                    "The same recipient cannot be added more than once with the same role.");
+            }
 
             var recipient = new Recipients
             {
@@ -825,25 +848,55 @@ namespace LV.SignFlow.Application.Envelopes
                   "This recipient cannot be edited by the sender.");
             }
 
+            var roleName =
+       string.IsNullOrWhiteSpace(request.RoleName)
+           ? GetDefaultRoleName(request.RecipientType)
+           : request.RoleName.Trim();
+
+            var user =
+                await _userRepository.GetByIdAsync(
+                    request.UserId,
+                    cancellationToken);
+
+            if (user is null ||
+                !user.IsActive ||
+                user.OrganizationId != _currentUser.OrganizationId)
+            {
+                throw new ArgumentException(
+                    "The selected recipient user is invalid.");
+            }
+
+            var existingRecipients =
+                await _envelopeRecipient.FindAsync(
+                    x => x.EnvelopeId == envelopeId,
+                    cancellationToken);
+
+            var duplicateRecipient =
+                existingRecipients.Any(x =>
+                    x.Id != recipientId &&
+                    string.Equals(
+                        x.Email?.Trim(),
+                        user.Email?.Trim(),
+                        StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(
+                        x.RoleName?.Trim(),
+                        roleName,
+                        StringComparison.OrdinalIgnoreCase));
+
+            if (duplicateRecipient)
+            {
+                throw new InvalidOperationException(
+                    "The same recipient cannot be added more than once with the same role.");
+            }
+
             if (recipient.RoutingOrder != request.RoutingOrder &&
               !recipient.AllowSenderChangeRoutingOrder)
             {
                 throw new InvalidOperationException(
                   "The routing order of this recipient cannot be changed.");
             }
-
-            var user =
-              await _userRepository.GetByIdAsync(
-                request.UserId,
-                cancellationToken);
-
-            if (user is null ||
-              !user.IsActive ||
-              user.OrganizationId != _currentUser.OrganizationId)
-            {
-                throw new ArgumentException(
-                  "The selected recipient user is invalid.");
-            }
+             
+             
 
             recipient.UserId = user.Id;
             recipient.Name = user.DisplayName;
@@ -2615,9 +2668,218 @@ namespace LV.SignFlow.Application.Envelopes
                 _ => false
             };
         }
+        private static bool IsPersistedFieldComplete(
+    Fields field,
+    EnvelopeFieldValue value)
+        {
+            return field.FieldType switch
+            {
+                FieldType.Text =>
+                    !string.IsNullOrWhiteSpace(value.ValueText),
 
-        public async Task FinishRecipientAsync(Guid envelopeId, Guid recipientId, FinishRecipientRequest request, CancellationToken cancellationToken =
-          default)
+                FieldType.Fullname =>
+                    !string.IsNullOrWhiteSpace(value.ValueText),
+
+                FieldType.Email =>
+                    !string.IsNullOrWhiteSpace(value.ValueText),
+
+                FieldType.RadioButton =>
+                    !string.IsNullOrWhiteSpace(value.ValueText),
+
+                FieldType.Dropdown =>
+                    !string.IsNullOrWhiteSpace(value.ValueText),
+
+                FieldType.Number =>
+                    value.ValueNumber.HasValue,
+
+                FieldType.DateSigned =>
+                    value.ValueDate.HasValue,
+
+                FieldType.Checkbox =>
+                    value.ValueBoolean == true,
+
+                _ => false
+            };
+        }
+        private static void ValidatePersistedFields(
+    IReadOnlyList<Fields> fields,
+    IReadOnlyList<EnvelopeFieldValue> values,
+    IReadOnlyList<EnvelopeAppliedSignature> marks)
+        {
+            foreach (var field in fields.Where(x => x.IsRequired))
+            {
+                if (
+                    field.FieldType == FieldType.Signature ||
+                    field.FieldType == FieldType.Initial ||
+                    field.FieldType == FieldType.Stamp)
+                {
+                    var hasMark =
+                        marks.Any(x =>
+                            x.EnvelopeFieldId == field.Id);
+
+                    if (!hasMark)
+                    {
+                        throw new ArgumentException(
+                            $"Required mark field '{field.Id}' has not been completed.");
+                    }
+
+                    continue;
+                }
+
+                var value =
+                    values.FirstOrDefault(x =>
+                        x.EnvelopeFieldId == field.Id);
+
+                if (
+                    value is null ||
+                    !IsPersistedFieldComplete(field, value))
+                {
+                    throw new ArgumentException(
+                        $"Required field '{field.Id}' has not been completed.");
+                }
+            }
+        }
+
+        private async Task EnsureAutoFieldValuesAsync(
+    IReadOnlyList<Fields> fields,
+    List<EnvelopeFieldValue> existingValues,
+    Recipients recipient,
+    DateTimeOffset now,
+    CancellationToken cancellationToken)
+        {
+            var autoFields =
+                fields.Where(x =>
+                    x.FieldType == FieldType.DateSigned ||
+                    x.FieldType == FieldType.Fullname ||
+                    x.FieldType == FieldType.Email)
+                .ToList();
+
+            foreach (var field in autoFields)
+            {
+                var fieldValue =
+                    existingValues.FirstOrDefault(
+                        x => x.EnvelopeFieldId == field.Id);
+
+                var isNew =
+                    fieldValue is null;
+
+                var shouldSave = false;
+
+                if (isNew)
+                {
+                    fieldValue =
+                        new EnvelopeFieldValue
+                        {
+                            Id = Guid.NewGuid(),
+
+                            EnvelopeFieldId =
+                                field.Id,
+
+                            SourceType =
+                                FieldOwnerType.Recipient,
+
+                            FilledByRecipientId =
+                                recipient.Id,
+
+                            FilledByUserId =
+                                _currentUser.UserId,
+
+                            FilledAt =
+                                now
+                        };
+                }
+
+                switch (field.FieldType)
+                {
+                    case FieldType.DateSigned:
+                        {
+                            if (!fieldValue!.ValueDate.HasValue)
+                            {
+                                fieldValue.ValueDate =
+                                    DateOnly.FromDateTime(
+                                        now.UtcDateTime);
+
+                                shouldSave = true;
+                            }
+
+                            break;
+                        }
+
+                    case FieldType.Fullname:
+                        {
+                            if (
+                                string.IsNullOrWhiteSpace(
+                                    fieldValue!.ValueText) &&
+                                !string.IsNullOrWhiteSpace(
+                                    recipient.Name))
+                            {
+                                fieldValue.ValueText =
+                                    recipient.Name.Trim();
+
+                                shouldSave = true;
+                            }
+
+                            break;
+                        }
+
+                    case FieldType.Email:
+                        {
+                            if (
+                                string.IsNullOrWhiteSpace(
+                                    fieldValue!.ValueText) &&
+                                !string.IsNullOrWhiteSpace(
+                                    recipient.Email))
+                            {
+                                fieldValue.ValueText =
+                                    recipient.Email.Trim();
+
+                                shouldSave = true;
+                            }
+
+                            break;
+                        }
+                }
+
+                /*
+                 * Məsələn recipient.Email özü boşdursa,
+                 * boş record yaratmırıq.
+                 * Required-dırsa aşağıdakı validation fail edəcək.
+                 */
+                if (!shouldSave)
+                {
+                    continue;
+                }
+
+                fieldValue!.SourceType =
+                    FieldOwnerType.Recipient;
+
+                fieldValue.FilledByRecipientId =
+                    recipient.Id;
+
+                fieldValue.FilledByUserId =
+                    _currentUser.UserId;
+
+                fieldValue.FilledAt =
+                    now;
+
+                if (isNew)
+                {
+                    existingValues.Add(
+                        fieldValue);
+
+                    await _fieldValueRepository.AddAsync(
+                        fieldValue,
+                        cancellationToken);
+                }
+                else
+                {
+                    _fieldValueRepository.Update(
+                        fieldValue);
+                }
+            }
+        }
+
+        public async Task FinishRecipientAsync(Guid envelopeId, Guid recipientId, CancellationToken cancellationToken = default)
         {
             EnsureAuthenticated();
 
@@ -2668,167 +2930,96 @@ namespace LV.SignFlow.Application.Envelopes
                 x.OwnerType == FieldOwnerType.Recipient &&
                 x.EnvelopeRecipientId == recipientId,
                 cancellationToken);
-
-            ValidateFinishRequest(
-              fields,
-              request);
+            
+            var fieldIds =fields.Select(x => x.Id).ToList();
 
             var existingValues =
-              await _fieldValueRepository.FindAsync(
-                x => fields
-                .Select(f => f.Id)
-                .Contains(x.EnvelopeFieldId),
-                cancellationToken);
-
-            if (existingValues.Count > 0)
-            {
-                throw new InvalidOperationException(
-                  "One or more recipient fields have already been completed.");
-            }
+                fieldIds.Count == 0
+                    ? new List<EnvelopeFieldValue>()
+                    : (
+                        await _fieldValueRepository.FindAsync(
+                            x => fieldIds.Contains(x.EnvelopeFieldId),
+                            cancellationToken)
+                      ).ToList();
 
             var existingMarks =
-              await _appliedSignatureRepository.FindAsync(
-                x =>
-                x.EnvelopeId == envelopeId &&
-                x.RecipientId == recipientId,
-                cancellationToken);
-
-            if (existingMarks.Count > 0)
-            {
-                throw new InvalidOperationException(
-                  "This recipient has already applied signing evidence.");
-            }
+       fieldIds.Count == 0
+           ? new List<EnvelopeAppliedSignature>()
+           : (
+               await _appliedSignatureRepository.FindAsync(
+                   x =>
+                       x.EnvelopeId == envelopeId &&
+                       x.RecipientId == recipientId &&
+                       fieldIds.Contains(x.EnvelopeFieldId),
+                   cancellationToken)
+             ).ToList();
 
             var now = DateTimeOffset.UtcNow;
 
-            var newValues =
-              new List<EnvelopeFieldValue>();
+            await EnsureAutoFieldValuesAsync(
+                fields,
+                existingValues,
+                recipient,
+                now,
+                cancellationToken);
 
-            var uploadedMarkPaths =
-              new List<string>();
+            ValidatePersistedFields(
+                fields,
+                existingValues,
+                existingMarks);
 
-            try
-            {
-                foreach (var field in fields)
-                {
-                    if (field.FieldType == FieldType.Signature ||
-                      field.FieldType == FieldType.Initial ||
-                      field.FieldType == FieldType.Stamp)
-                    {
-                        var markRequest =
-                          request.AppliedMarks.FirstOrDefault(
-                            x => x.FieldId == field.Id);
 
-                        if (markRequest is null)
-                        {
-                            if (field.IsRequired)
-                            {
-                                throw new ArgumentException(
-                  $"Field '{field.Id}' requires a signature or mark.");
-                            }
 
-                            continue;
-                        }
-
-                        var appliedMark =
-                          await CreateAppliedMarkAsync(
-                            envelope,
-                            recipient,
-                            field,
-                            markRequest,
-                            now,
-                            uploadedMarkPaths,
-                            cancellationToken);
-
-                        await _appliedSignatureRepository.AddAsync(
-                          appliedMark,
-                          cancellationToken);
-
-                        continue;
-                    }
-
-                    var input =
-                      request.Values.FirstOrDefault(
-                        x => x.FieldId == field.Id);
-
-                    var value =
-                      CreateFieldValue(
-                        field,
-                        recipient,
-                        input,
-                        now);
-
-                    if (value is null)
-                    {
-                        if (field.IsRequired)
-                        {
-                            throw new ArgumentException(
-                $"Required field '{field.Id}' has no value.");
-                        }
-
-                        continue;
-                    }
-
-                    newValues.Add(value);
-
-                    await _fieldValueRepository.AddAsync(
-                      value,
-                      cancellationToken);
-                }
-
-                recipient.Status =
+            recipient.Status =
                   RecipientStatus.Completed;
 
                 recipient.CompletedAt = now;
 
                 _envelopeRecipient.Update(recipient);
+            if (envelope.Status == EnvelopeStatus.Sent)
+            {
+                envelope.Status = EnvelopeStatus.InProgress;
 
-                if (envelope.Status == EnvelopeStatus.Sent)
+                await _statusHistoryRepository.AddAsync(
+                    new StatusHistory
+                    {
+                        Id = Guid.NewGuid(),
+                        EnvelopeId = envelope.Id,
+                        PreviousStatus = EnvelopeStatus.Sent,
+                        NewStatus = EnvelopeStatus.InProgress,
+                        ChangedByUserId = _currentUser.UserId,
+                        Reason = "Recipient completed an action.",
+                        ChangedAt = now
+                    },
+                    cancellationToken);
+            }
+
+            var eventType =
+                recipient.RecipientType switch
                 {
-                    envelope.Status =
-                      EnvelopeStatus.InProgress;
+                    RecipientType.Signer =>
+                        EnvelopeEventType.Signed,
 
-                    await _statusHistoryRepository.AddAsync(
-                      new StatusHistory
-                      {
-                          Id = Guid.NewGuid(),
-                          EnvelopeId = envelope.Id,
-                          PreviousStatus = EnvelopeStatus.Sent,
-                          NewStatus = EnvelopeStatus.InProgress,
-                          ChangedByUserId = _currentUser.UserId,
-                          Reason = "Recipient completed an action.",
-                          ChangedAt = now
-                      },
-                      cancellationToken);
-                }
+                    RecipientType.Approver =>
+                        EnvelopeEventType.Approved,
 
-                var eventType =
-                  recipient.RecipientType
-                switch
-                  {
-                      RecipientType.Signer =>
-                EnvelopeEventType.Signed,
+                    _ =>
+                        EnvelopeEventType.Viewed
+                };
 
-                      RecipientType.Approver =>
-              EnvelopeEventType.Approved,
+            await _eventRepository.AddAsync(
+                new Events
+                {
+                    Id = Guid.NewGuid(),
+                    EnvelopeId = envelope.Id,
+                    RecipientId = recipient.Id,
+                    UserId = _currentUser.UserId,
+                    EventType = eventType,
+                    OccurredAt = now
+                },
+                cancellationToken);
 
-                      _ =>
-              EnvelopeEventType.Viewed
-                  };
-
-                await _eventRepository.AddAsync(
-                  new Events
-                  {
-                      Id = Guid.NewGuid(),
-                      EnvelopeId = envelope.Id,
-                      RecipientId = recipient.Id,
-                      UserId = _currentUser.UserId,
-                      EventType = eventType,
-                      OccurredAt = now
-                  },
-                  cancellationToken);
-
-                var allRecipients =
+            var allRecipients =
                   await _envelopeRecipient.FindAsync(
                     x => x.EnvelopeId == envelopeId,
                     cancellationToken);
@@ -2851,7 +3042,7 @@ namespace LV.SignFlow.Application.Envelopes
                   envelope,
                   routingRecipients,
                   cancellationToken,
-                  newValues);
+                  existingValues.ToList());
 
                 await TryCompleteEnvelopeAsync(
                   envelope,
@@ -2863,25 +3054,8 @@ namespace LV.SignFlow.Application.Envelopes
 
                 await _unitOfWork.SaveChangesAsync(
                   cancellationToken);
-            }
-            catch
-            {
-                foreach (var path in uploadedMarkPaths)
-                {
-                    try
-                    {
-                        await _fileStorage.DeleteAsync(
-                          path,
-                          cancellationToken);
-                    }
-                    catch
-                    {
-                        // cleanup əsas xətanı gizlətməsin
-                    }
-                }
-
-                throw;
-            }
+            
+            
         }
 
         private async Task TryCompleteEnvelopeAsync(
@@ -4314,6 +4488,127 @@ default)
                         ConditionOperator.IsNotEmpty,
 
                 _ => false
+            };
+        }
+
+        private async Task<Recipients> GetActiveSigningRecipientAsync(
+    Envelope envelope,
+    CancellationToken cancellationToken)
+        {
+            var recipients =
+                await _envelopeRecipient.FindAsync(
+                    x =>
+                        x.EnvelopeId == envelope.Id &&
+                        x.UserId == _currentUser.UserId,
+                    cancellationToken);
+
+            if (recipients.Count == 0)
+            {
+                throw new UnauthorizedAccessException(
+                    "You are not a recipient of this envelope.");
+            }
+
+            var recipient =
+                recipients
+                    .Where(x =>
+                        (
+                            x.Status == RecipientStatus.Active ||
+                            x.Status == RecipientStatus.Viewed
+                        ) &&
+                        envelope.CurrentRoutingOrder.HasValue &&
+                        x.RoutingOrder ==
+                            envelope.CurrentRoutingOrder.Value)
+                    .OrderBy(x => x.RoutingOrder)
+                    .FirstOrDefault();
+
+            if (recipient is null)
+            {
+                throw new InvalidOperationException(
+                    "It is not this recipient's turn to act yet.");
+            }
+
+            return recipient;
+        }
+
+        public async Task<FinishSigningResultDto> FinishSigningAsync(
+    Guid envelopeId,
+    CancellationToken cancellationToken = default)
+        {
+            EnsureAuthenticated();
+
+            if (envelopeId == Guid.Empty)
+            {
+                throw new ArgumentException(
+                    "Envelope id is required.");
+            }
+            var envelope =
+   await _envelopeRepository.GetByIdAsync(
+       envelopeId,
+       cancellationToken);
+
+            if (envelope is null ||
+                envelope.IsDeleted ||
+                envelope.OrganizationId != _currentUser.OrganizationId)
+            {
+                throw new KeyNotFoundException(
+                    "Envelope was not found.");
+            }
+
+            var recipient =
+    await GetActiveSigningRecipientAsync(
+        envelope,
+        cancellationToken);
+
+            if (recipient is null)
+            {
+                throw new InvalidOperationException(
+                    "There is no active signing action for this user.");
+            }
+
+             
+            await FinishRecipientAsync(
+                envelopeId,
+                recipient.Id,
+                cancellationToken);
+             
+            var updatedEnvelope =
+                await _envelopeRepository.GetByIdAsync(
+                    envelopeId,
+                    cancellationToken);
+
+            var updatedRecipient =
+                await _envelopeRecipient.GetByIdAsync(
+                    recipient.Id,
+                    cancellationToken);
+
+            if (
+                updatedEnvelope is null ||
+                updatedRecipient is null)
+            {
+                throw new InvalidOperationException(
+                    "Signing completed but the final state could not be loaded.");
+            }
+
+            return new FinishSigningResultDto
+            {
+                RecipientId =
+                    updatedRecipient.Id,
+
+                RecipientStatus =
+                    updatedRecipient.Status,
+
+                EnvelopeStatus =
+                    updatedEnvelope.Status,
+
+                IsEnvelopeCompleted =
+                    updatedEnvelope.Status ==
+                    EnvelopeStatus.Completed,
+
+                CurrentRoutingOrder =
+                    updatedEnvelope.CurrentRoutingOrder,
+
+                CompletedAt =
+                    updatedRecipient.CompletedAt
             };
         }
     }

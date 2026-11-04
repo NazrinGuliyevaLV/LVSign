@@ -456,7 +456,7 @@ namespace LV.SignFlow.Api.Controllers
             try
             {
                 await _envelopeService.FinishRecipientAsync(
-                envelopeId, recipientId, request, cancellationToken);
+                envelopeId, recipientId, cancellationToken);
 
                 return NoContent();
             }

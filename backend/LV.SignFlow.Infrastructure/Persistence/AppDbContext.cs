@@ -30,7 +30,6 @@ namespace LV.SignFlow.Infrastructure.Persistence
         public DbSet<TemplateShare> TemplateShares => Set<TemplateShare>();
         public DbSet<TemplateVersion> TemplateVersions => Set<TemplateVersion>();
 
-
         public DbSet<User> Users => Set<User>();
         public DbSet<Permission> Permissions => Set<Permission>();
         public DbSet<PermissionProfile> PermissionProfiles => Set<PermissionProfile>();

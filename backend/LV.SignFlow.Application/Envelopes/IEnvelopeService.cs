@@ -1,5 +1,6 @@
 ﻿using LV.SignFlow.Application.Envelopes.Dtos;
 using LV.SignFlow.Application.Envelopes.Requests;
+using LV.SignFlow.Application.Signing.Dtos;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -36,7 +37,9 @@ namespace LV.SignFlow.Application.Envelopes
         public Task<Guid> CreateFromTemplateAsync(Guid templateId,EnvelopeFromTemplateRequest request,CancellationToken cancellationToken = default);
 
         public Task SendAsync(Guid envelopeId,CancellationToken cancellationToken = default);
-        public Task FinishRecipientAsync(Guid envelopeId,Guid recipientId,FinishRecipientRequest request,CancellationToken cancellationToken = default);
+        public Task FinishRecipientAsync(Guid envelopeId,Guid recipientId,CancellationToken cancellationToken = default);
+        Task<FinishSigningResultDto> FinishSigningAsync(Guid envelopeId, CancellationToken cancellationToken = default);
+
         public Task DeclineRecipientAsync(Guid envelopeId,Guid recipientId,VoidAndDeclineEnvelopeRequest request,CancellationToken cancellationToken = default);
         public Task VoidAsync(Guid envelopeId, VoidAndDeclineEnvelopeRequest request, CancellationToken cancellationToken = default);
 

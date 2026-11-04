@@ -30,6 +30,7 @@ namespace LV.SignFlow.Infrastructure
             services.AddScoped<IUnitOfWork,UnitOfWork>();
             services.AddScoped<ITemplateRepository, TemplateRepository>();
             services.AddScoped<IFileStorage, LocalFileStorage>();
+            services.AddScoped<ISignatureAssetStorage, LocalSignatureAssetStorage>();
             
 
             return services;
