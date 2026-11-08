@@ -60,7 +60,7 @@ namespace LV.SignFlow.Infrastructure.Persistence
         public DbSet<Signature> Signatures => Set<Signature>();
         public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
         public DbSet<EnvelopeAppliedSignature> EnvelopeAppliedSignatures => Set<EnvelopeAppliedSignature>();
-
+        public DbSet<EnvelopeFinalization> EnvelopeFinalizations => Set<EnvelopeFinalization>();
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);

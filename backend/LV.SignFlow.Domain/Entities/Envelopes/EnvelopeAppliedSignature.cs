@@ -1,6 +1,7 @@
 ﻿using LV.SignFlow.Domain.Entities.Signing;
 using LV.SignFlow.Domain.Entities.Users;
 using LV.SignFlow.Domain.Enums.EnvelopeEnums;
+using LV.SignFlow.Domain.Enums.SigningEnums;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -23,7 +24,13 @@ namespace LV.SignFlow.Domain.Entities.Envelopes
 
         // Signature və Initial üçün
         public Guid? SourceSignatureId { get; set; }
+        public SignatureType? SignatureTypeSnapshot { get; set; }
 
+        public string? TypedTextSnapshot { get; set; }
+
+        public string? FontKeySnapshot { get; set; }
+
+        public string? AppliedContentType { get; set; }
         // Stamp üçün
         public Guid? SourceStampId { get; set; }
 

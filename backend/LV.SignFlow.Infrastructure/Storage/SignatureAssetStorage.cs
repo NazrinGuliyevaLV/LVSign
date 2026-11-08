@@ -6,16 +6,17 @@ using System.Text;
 
 namespace LV.SignFlow.Infrastructure.Storage
 {
-    public class LocalSignatureAssetStorage : ISignatureAssetStorage
+    public sealed class SignatureAssetStorage
+        : ISignatureAssetStorage
     {
-        private readonly string _rootPath;
+        private readonly IFileStorage
+            _fileStorage;
 
-        public LocalSignatureAssetStorage()
+        public SignatureAssetStorage(
+            IFileStorage fileStorage)
         {
-            _rootPath = Path.Combine(
-                AppContext.BaseDirectory,
-                "Storage",
-                "Signatures");
+            _fileStorage =
+                fileStorage;
         }
 
         public async Task<string> SaveTypedAsync(
@@ -24,33 +25,20 @@ namespace LV.SignFlow.Infrastructure.Storage
             string? fontKey,
             CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrWhiteSpace(text))
+            if (string.IsNullOrWhiteSpace(
+                    text))
             {
                 throw new ArgumentException(
                     "Signature text is required.");
             }
-
-            var directory =
-                Path.Combine(
-                    _rootPath,
-                    userId.ToString());
-
-            Directory.CreateDirectory(directory);
-
-            var fileName =
-                $"{Guid.NewGuid():N}.svg";
-
-            var fullPath =
-                Path.Combine(
-                    directory,
-                    fileName);
 
             var encodedText =
                 WebUtility.HtmlEncode(
                     text.Trim());
 
             var fontFamily =
-                GetFontFamily(fontKey);
+                GetFontFamily(
+                    fontKey);
 
             var svg =
                 $$"""
@@ -72,15 +60,21 @@ namespace LV.SignFlow.Infrastructure.Storage
                 </svg>
                 """;
 
-            await File.WriteAllTextAsync(
-                fullPath,
-                svg,
-                Encoding.UTF8,
-                cancellationToken);
+            var bytes =
+                Encoding.UTF8.GetBytes(
+                    svg);
 
-            return Path.Combine(
-                userId.ToString(),
-                fileName);
+            await using var stream =
+                new MemoryStream(
+                    bytes,
+                    writable: false);
+
+            return await _fileStorage.UploadAsync(
+                stream,
+                "signature.svg",
+                "image/svg+xml",
+                $"signatures/{userId:N}",
+                cancellationToken);
         }
 
         public async Task<string> SaveDrawnAsync(
@@ -89,7 +83,7 @@ namespace LV.SignFlow.Infrastructure.Storage
             CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(
-                imageDataUrl))
+                    imageDataUrl))
             {
                 throw new ArgumentException(
                     "Signature image is required.");
@@ -106,16 +100,14 @@ namespace LV.SignFlow.Infrastructure.Storage
                     "Only PNG signature images are supported.");
             }
 
-            var base64 =
-                imageDataUrl[prefix.Length..];
-
             byte[] bytes;
 
             try
             {
                 bytes =
                     Convert.FromBase64String(
-                        base64);
+                        imageDataUrl[
+                            prefix.Length..]);
             }
             catch (FormatException)
             {
@@ -123,74 +115,67 @@ namespace LV.SignFlow.Infrastructure.Storage
                     "Invalid signature image.");
             }
 
-            // Təxminən 2 MB limit.
-            if (bytes.Length > 2 * 1024 * 1024)
+            if (bytes.Length >
+                2 * 1024 * 1024)
             {
                 throw new ArgumentException(
                     "Signature image is too large.");
             }
 
-            var directory =
-                Path.Combine(
-                    _rootPath,
-                    userId.ToString());
+            await using var stream =
+                new MemoryStream(
+                    bytes,
+                    writable: false);
 
-            Directory.CreateDirectory(
-                directory);
-
-            var fileName =
-                $"{Guid.NewGuid():N}.png";
-
-            var fullPath =
-                Path.Combine(
-                    directory,
-                    fileName);
-
-            await File.WriteAllBytesAsync(
-                fullPath,
-                bytes,
+            return await _fileStorage.UploadAsync(
+                stream,
+                "signature.png",
+                "image/png",
+                $"signatures/{userId:N}",
                 cancellationToken);
-
-            return Path.Combine(
-                userId.ToString(),
-                fileName);
         }
 
-        public async Task<(byte[] Content, string ContentType)>
-            ReadAsync(
-                string storagePath,
-                CancellationToken cancellationToken = default)
+        public async Task<(
+            byte[] Content,
+            string ContentType)> ReadAsync(
+            string storagePath,
+            CancellationToken cancellationToken = default)
         {
-            var fullPath =
-                Path.Combine(
-                    _rootPath,
-                    storagePath);
-
-            if (!File.Exists(fullPath))
-            {
-                throw new FileNotFoundException(
-                    "Signature asset was not found.");
-            }
-
-            var content =
-                await File.ReadAllBytesAsync(
-                    fullPath,
+            await using var stream =
+                await _fileStorage.OpenReadAsync(
+                    storagePath,
                     cancellationToken);
 
+            using var memory =
+                new MemoryStream();
+
+            await stream.CopyToAsync(
+                memory,
+                cancellationToken);
+
             var extension =
-                Path.GetExtension(fullPath)
+                Path.GetExtension(
+                    storagePath)
                     .ToLowerInvariant();
 
             var contentType =
                 extension switch
                 {
-                    ".svg" => "image/svg+xml",
-                    ".png" => "image/png",
-                    _ => "application/octet-stream"
+                    ".svg" =>
+                        "image/svg+xml",
+
+                    ".png" =>
+                        "image/png",
+
+                    ".jpg" or ".jpeg" =>
+                        "image/jpeg",
+
+                    _ =>
+                        "application/octet-stream"
                 };
 
             return (
-                content,
+                memory.ToArray(),
                 contentType);
         }
 

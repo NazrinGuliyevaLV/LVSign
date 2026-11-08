@@ -72,11 +72,27 @@ namespace LV.SignFlow.Api.Controllers
             try
             {
                 await _envelopeService.DeleteEnvelopeAsync(envelopeId, cancellationToken);
-                return StatusCode(StatusCodes.Status200OK, envelopeId);
+                return NoContent();
             }
-            catch (Exception ex)
+            catch (KeyNotFoundException)
             {
-                return BadRequest(ex.Message);
+                return NotFound();
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return StatusCode(
+                    StatusCodes.Status403Forbidden,
+                    ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Conflict(
+                    ex.Message);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(
+                    ex.Message);
             }
         }
 
@@ -739,6 +755,82 @@ namespace LV.SignFlow.Api.Controllers
             {
                 return Conflict(
                     ex.Message);
+            }
+        }
+
+
+        [HttpGet(
+      "{envelopeId:guid}/documents/{documentId:guid}/final")]
+        public async Task<IActionResult> DownloadFinalDocument(
+      Guid envelopeId,
+      Guid documentId,
+      CancellationToken cancellationToken)
+        {
+            var file =
+                await _envelopeService.OpenFinalDocumentAsync(
+                    envelopeId,
+                    documentId,
+                    cancellationToken);
+
+            return File(
+                file.Content,
+                file.ContentType,
+                file.FileName);
+        }
+
+        [HttpGet("{envelopeId:guid}/certificate")]
+        public async Task<IActionResult> DownloadCertificate(
+     Guid envelopeId,
+     CancellationToken cancellationToken)
+        {
+            var file =
+                await _envelopeService.OpenCertificateAsync(
+                    envelopeId,
+                    cancellationToken);
+
+            return File(
+                file.Content,
+                file.ContentType,
+                file.FileName);
+        }
+
+
+        [HttpGet("{envelopeId:guid}/downloads")]
+        public async Task<ActionResult<EnvelopeDownloadsDto>>
+    GetDownloads(
+        Guid envelopeId,
+        CancellationToken cancellationToken)
+        {
+            var result =
+                await _envelopeService.GetDownloadsAsync(
+                    envelopeId,
+                    cancellationToken);
+
+            return Ok(result);
+        }
+
+        [HttpGet("{envelopeId:guid}/history")]
+        public async Task<
+     ActionResult<
+         IReadOnlyList<
+             EnvelopeHistoryItemDto>>>
+     GetHistory(
+         Guid envelopeId,
+         CancellationToken cancellationToken)
+        {
+            try
+            {
+                var result =
+                    await _envelopeService
+                        .GetHistoryAsync(
+                            envelopeId,
+                            cancellationToken);
+
+                return Ok(result);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
             }
         }
     }

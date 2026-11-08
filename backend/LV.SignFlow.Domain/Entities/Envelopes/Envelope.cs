@@ -2,6 +2,7 @@
 using LV.SignFlow.Domain.Entities.Templates;
 using LV.SignFlow.Domain.Entities.Users;
 using LV.SignFlow.Domain.Enums.EnvelopeEnums;
+using LV.SignFlow.Domain.Policies;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -29,8 +30,14 @@ namespace LV.SignFlow.Domain.Entities.Envelopes
         public DateTimeOffset UpdatedAt { get; set; }
         public bool IsDeleted { get; set; }
         public Guid OrganizationId { get; set; }
+        public string? CertificateBlobPath { get; set; }
 
+        public string? CertificateHash { get; set; }
+
+        public DateTimeOffset? CertificateGeneratedAt { get; set; }
         public int? ReminderIntervalDays { get; set; }
+
+        public EnvelopeFinalization? Finalization { get; set; }
         public User CreatedByUser { get; set; } = null!;
         public Organization Organization { get; set; } = null!;
         public TemplateVersion? SourceTemplateVersion { get; set; }
@@ -42,7 +49,50 @@ namespace LV.SignFlow.Domain.Entities.Envelopes
         public ICollection<EnvelopeRoutingRuleSet> EnvelopeRoutingRuleSets { get; set; }
     = new List<EnvelopeRoutingRuleSet>();
 
+        public bool TransitionTo(
+    EnvelopeStatus newStatus,
+    DateTimeOffset now)
+        { 
+            if (Status == newStatus)
+            {
+                return false;
+            }
 
+            EnvelopeStatusTransitionPolicy
+                .EnsureCanTransition(
+                    Status,
+                    newStatus);
+
+            Status =
+                newStatus;
+
+            switch (newStatus)
+            {
+                case EnvelopeStatus.Sent:
+                    SentAt ??= now;
+                    break;
+
+                case EnvelopeStatus.Completed:
+                    CompletedAt ??= now;
+                    CurrentRoutingOrder = null;
+                    break;
+
+                case EnvelopeStatus.Voided:
+                    VoidedAt ??= now;
+                    CurrentRoutingOrder = null;
+                    break;
+
+                case EnvelopeStatus.Declined:
+                case EnvelopeStatus.Expired:
+                    CurrentRoutingOrder = null;
+                    break;
+            }
+
+            UpdatedAt =
+                now;
+
+            return true;
+        }
 
     }
 }

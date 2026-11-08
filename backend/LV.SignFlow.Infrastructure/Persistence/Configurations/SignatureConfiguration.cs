@@ -18,6 +18,11 @@ namespace LV.SignFlow.Infrastructure.Persistence.Configurations
             builder.Property(x => x.BlobPath)
             .IsRequired()
             .HasMaxLength(1000);
+            builder.Property(x => x.TypedText)
+    .HasMaxLength(250);
+
+            builder.Property(x => x.FontKey)
+                .HasMaxLength(50);
 
             builder.HasOne(x => x.User)
                 .WithMany(x => x.Signatures)

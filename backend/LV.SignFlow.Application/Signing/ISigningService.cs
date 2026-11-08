@@ -16,5 +16,9 @@ namespace LV.SignFlow.Application.Signing
         Task RemoveMarkAsync(Guid envelopeId, Guid fieldId, CancellationToken cancellationToken = default);
 
         Task<DeclineSigningResultDto> DeclineSigningAsync(Guid envelopeId,string reason,CancellationToken cancellationToken = default);
+        Task<byte[]> GenerateTestFinalPdfAsync(
+    Guid envelopeId,
+    Guid documentId,
+    CancellationToken cancellationToken = default);
     }
 }

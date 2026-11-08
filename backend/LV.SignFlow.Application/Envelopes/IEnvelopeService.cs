@@ -1,4 +1,5 @@
-﻿using LV.SignFlow.Application.Envelopes.Dtos;
+﻿using LV.SignFlow.Application.Common.Models;
+using LV.SignFlow.Application.Envelopes.Dtos;
 using LV.SignFlow.Application.Envelopes.Requests;
 using LV.SignFlow.Application.Signing.Dtos;
 using System;
@@ -53,5 +54,36 @@ namespace LV.SignFlow.Application.Envelopes
 
         public Task DeleteRoutingRuleAsync(Guid envelopeId,Guid ruleId,CancellationToken cancellationToken = default);
         public Task<EnvelopeRoutingRuleDto> UpdateRoutingRuleAsync(Guid envelopeId,Guid ruleId,EnvelopeRoutingRuleRequest request,CancellationToken cancellationToken = default);
+
+
+        Task<FileDownloadResult> DownloadFinalDocumentAsync(
+        Guid envelopeId,
+        Guid documentId,
+        CancellationToken cancellationToken = default);
+
+        Task<FileDownloadResult> DownloadCompletionCertificateAsync(
+            Guid envelopeId,
+            CancellationToken cancellationToken = default);
+
+        Task<EnvelopeDownloadsDto> GetDownloadsAsync(
+    Guid envelopeId,
+    CancellationToken cancellationToken = default);
+
+        Task<EnvelopeArtifactFile> OpenFinalDocumentAsync(
+            Guid envelopeId,
+            Guid documentId,
+            CancellationToken cancellationToken = default);
+
+        Task<EnvelopeArtifactFile> OpenCertificateAsync(
+            Guid envelopeId,
+            CancellationToken cancellationToken = default);
+
+        Task<int> ExpireDueEnvelopesAsync(
+    DateTimeOffset now,
+    CancellationToken cancellationToken = default);
+
+        Task<IReadOnlyList<EnvelopeHistoryItemDto>> GetHistoryAsync(
+        Guid envelopeId,
+        CancellationToken cancellationToken = default);
     }
 }

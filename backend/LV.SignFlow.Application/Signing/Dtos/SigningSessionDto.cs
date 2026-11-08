@@ -1,4 +1,5 @@
 ﻿using LV.SignFlow.Domain.Enums.EnvelopeEnums;
+using LV.SignFlow.Domain.Enums.SigningEnums;
 using LV.SignFlow.Domain.Enums.TemplateEnums;
 using System;
 using System.Collections.Generic;
@@ -105,5 +106,13 @@ namespace LV.SignFlow.Application.Signing.Dtos
         public Guid? SourceSignatureId { get; set; }
 
         public Guid? SourceStampId { get; set; }
+
+        public SignatureType? SignatureTypeSnapshot { get; set; }
+
+        public string? TypedTextSnapshot { get; set; }
+
+        public string? FontKeySnapshot { get; set; }
+
+        public string? AppliedContentType { get; set; }
     }
 }

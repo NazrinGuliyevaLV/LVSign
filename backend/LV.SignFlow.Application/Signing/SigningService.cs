@@ -1,4 +1,6 @@
 ﻿using LV.SignFlow.Application.Common.Interfaces;
+using LV.SignFlow.Application.Common.Mapping;
+using LV.SignFlow.Application.Common.Models;
 using LV.SignFlow.Application.Envelopes;
 using LV.SignFlow.Application.Envelopes.Requests;
 using LV.SignFlow.Application.Signing.Dtos;
@@ -29,9 +31,12 @@ namespace LV.SignFlow.Application.Signing
         public IUnitOfWork _unitOfWork;
         private readonly ISignatureAssetStorage _signatureAssetStorage;
         private readonly IEnvelopeService _envelopeService;
+        private readonly IFinalPdfRenderer _finalPdfRenderer;
+        private readonly IFileStorage _fileStorage;
+        
 
         public SigningService(
-        IRepository<Envelope> envelopeRepository, IRepository<Recipients> envelopeRecipient, IRepository<Documents> envelopeDocument, ICurrentUser currentUser, IRepository<Fields> envelopeField, IRepository<EnvelopeFieldValue> envelopeFieldValue, IRepository<EnvelopeAppliedSignature> envelopeAppliedSignature, IUnitOfWork unitOfWork, IRepository<Signature> signatureRepository, IRepository<Stamps> stampRepository, ISignatureAssetStorage signatureAssetStorage, IEnvelopeService envelopeService)
+        IRepository<Envelope> envelopeRepository, IRepository<Recipients> envelopeRecipient, IRepository<Documents> envelopeDocument, ICurrentUser currentUser, IRepository<Fields> envelopeField, IRepository<EnvelopeFieldValue> envelopeFieldValue, IRepository<EnvelopeAppliedSignature> envelopeAppliedSignature, IUnitOfWork unitOfWork, IRepository<Signature> signatureRepository, IRepository<Stamps> stampRepository, ISignatureAssetStorage signatureAssetStorage, IEnvelopeService envelopeService, IFinalPdfRenderer finalPdfRenderer, IFileStorage fileStorage)
         {
             _envelopeRepository = envelopeRepository;
             _envelopeRecipient = envelopeRecipient;
@@ -45,6 +50,8 @@ namespace LV.SignFlow.Application.Signing
             _stampRepository = stampRepository;
             _signatureAssetStorage = signatureAssetStorage;
             _envelopeService = envelopeService;
+            _finalPdfRenderer = finalPdfRenderer;
+            _fileStorage = fileStorage;
         }
         private void EnsureAuthenticated()
         {
@@ -342,6 +349,17 @@ namespace LV.SignFlow.Application.Signing
                           AppliedAt = appliedSignature.AppliedAt,
                           SourceSignatureId = appliedSignature.SourceSignatureId,
                           SourceStampId=appliedSignature.SourceStampId,
+                          SignatureTypeSnapshot =
+    appliedSignature.SignatureTypeSnapshot,
+
+                          TypedTextSnapshot =
+    appliedSignature.TypedTextSnapshot,
+
+                          FontKeySnapshot =
+    appliedSignature.FontKeySnapshot,
+
+                          AppliedContentType =
+    appliedSignature.AppliedContentType,
                       }
                   };
               }
@@ -374,10 +392,8 @@ namespace LV.SignFlow.Application.Signing
             {
                 throw new KeyNotFoundException("Envelope was not found.");
             }
-            if (envelope.Status != EnvelopeStatus.Sent && envelope.Status != EnvelopeStatus.InProgress)
-            {
-                throw new InvalidOperationException("This envelope is not available for signing.");
-            }
+            EnsureEnvelopeAvailableForSigning(
+    envelope);
 
             var recipients = await _envelopeRecipient.FindAsync(
             x => x.EnvelopeId == envelopeId && x.UserId == _currentUser.UserId, cancellationToken);
@@ -522,261 +538,826 @@ namespace LV.SignFlow.Application.Signing
             };
 
         }
+        private async Task<string> CopySignatureAppliedMarkToStorageAsync(
+    string signatureBlobPath,
+    Guid envelopeId,
+    CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(signatureBlobPath))
+            {
+                throw new InvalidOperationException(
+                    "Signature asset path is missing.");
+            }
 
-        public async Task<SigningAppliedSignatureDto> ApplyMarkAsync(Guid envelopeId, Guid fieldId, ApplySigningMarkRequest request, CancellationToken cancellationToken =
-      default)
+            var (content, contentType) =
+                await _signatureAssetStorage.ReadAsync(
+                    signatureBlobPath,
+                    cancellationToken);
+
+            var extension =
+                Path.GetExtension(signatureBlobPath);
+
+            if (string.IsNullOrWhiteSpace(extension))
+            {
+                extension =
+                    contentType switch
+                    {
+                        "image/svg+xml" => ".svg",
+                        "image/png" => ".png",
+                        _ => ".bin"
+                    };
+            }
+
+            await using var stream =
+                new MemoryStream(
+                    content,
+                    writable: false);
+
+            return await _fileStorage.UploadAsync(
+                stream,
+                $"signature{extension}",
+                contentType,
+                $"envelopes/{envelopeId}/applied-marks",
+                cancellationToken);
+        }
+
+        private async Task<string> CopyStampAppliedMarkToStorageAsync(
+    string stampBlobPath,
+    Guid envelopeId,
+    CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(stampBlobPath))
+            {
+                throw new InvalidOperationException(
+                    "Stamp asset path is missing.");
+            }
+
+            await using var sourceStream =
+                await _fileStorage.OpenReadAsync(
+                    stampBlobPath,
+                    cancellationToken);
+
+            var extension =
+                Path.GetExtension(stampBlobPath)
+                    .ToLowerInvariant();
+
+            var contentType =
+                extension switch
+                {
+                    ".png" => "image/png",
+                    ".jpg" => "image/jpeg",
+                    ".jpeg" => "image/jpeg",
+                    ".svg" => "image/svg+xml",
+                    _ => "application/octet-stream"
+                };
+
+            return await _fileStorage.UploadAsync(
+                sourceStream,
+                $"stamp{extension}",
+                contentType,
+                $"envelopes/{envelopeId}/applied-marks",
+                cancellationToken);
+        }
+
+        public async Task<SigningAppliedSignatureDto> ApplyMarkAsync(
+    Guid envelopeId,
+    Guid fieldId,
+    ApplySigningMarkRequest request,
+    CancellationToken cancellationToken = default)
         {
             EnsureAuthenticated();
+
             if (envelopeId == Guid.Empty)
             {
-                throw new ArgumentException("Envelope id is required.");
+                throw new ArgumentException(
+                    "Envelope id is required.");
             }
 
-            var envelope = await _envelopeRepository.GetByIdAsync(envelopeId, cancellationToken);
-
-            if (envelope is null || envelope.IsDeleted || envelope.OrganizationId != _currentUser.OrganizationId)
+            if (fieldId == Guid.Empty)
             {
-                throw new KeyNotFoundException("Envelope was not found.");
-            }
-            if (envelope.Status != EnvelopeStatus.Sent && envelope.Status != EnvelopeStatus.InProgress)
-            {
-                throw new InvalidOperationException("This envelope is not available for signing.");
+                throw new ArgumentException(
+                    "Field id is required.");
             }
 
-            var recipients = await _envelopeRecipient.FindAsync(
-            x => x.EnvelopeId == envelopeId && x.UserId == _currentUser.UserId, cancellationToken);
+            var envelope =
+                await _envelopeRepository.GetByIdAsync(
+                    envelopeId,
+                    cancellationToken);
 
-            var recipient =await GetActiveSigningRecipientAsync(
-          envelope,
-          cancellationToken);
-
-            if (recipient is null)
+            if (
+                envelope is null ||
+                envelope.IsDeleted ||
+                envelope.OrganizationId != _currentUser.OrganizationId)
             {
-                throw new UnauthorizedAccessException("You are not a recipient of this envelope.");
-            }
-            if (recipient.Status == RecipientStatus.Completed || recipient.Status == RecipientStatus.Declined || recipient.Status == RecipientStatus.Skipped || recipient.Status == RecipientStatus.WaitingForCondition)
-            {
-                throw new InvalidOperationException("This recipient can no longer sign this envelope.");
-            }
-            if (!envelope.CurrentRoutingOrder.HasValue || recipient.RoutingOrder != envelope.CurrentRoutingOrder.Value)
-            {
-                throw new InvalidOperationException("It is not this recipient's turn to act yet.");
+                throw new KeyNotFoundException(
+                    "Envelope was not found.");
             }
 
-            var fields = await _envelopeField.FindAsync(
-            x => x.Id == fieldId && x.EnvelopeId == envelopeId, cancellationToken);
-            var field = fields.FirstOrDefault();
-            if (field is null ||
-     field.EnvelopeId != envelopeId ||
-     field.EnvelopeRecipientId != recipient.Id)
+            EnsureEnvelopeAvailableForSigning(
+     envelope);
+
+            /*
+             * Yalnız hazırda active olan və
+             * current routing order-də olan recipient
+             * mark tətbiq edə bilər.
+             */
+            var recipient =
+                await GetActiveSigningRecipientAsync(
+                    envelope,
+                    cancellationToken);
+
+            var fields =
+                await _envelopeField.FindAsync(
+                    x =>
+                        x.Id == fieldId &&
+                        x.EnvelopeId == envelopeId,
+                    cancellationToken);
+
+            var field =
+                fields.FirstOrDefault();
+
+            if (field is null)
             {
                 throw new KeyNotFoundException(
                     "Signing field was not found.");
             }
 
-            if (field.OwnerType != FieldOwnerType.Recipient || field.EnvelopeRecipientId != recipient.Id)
+            if (
+                field.OwnerType != FieldOwnerType.Recipient ||
+                field.EnvelopeRecipientId != recipient.Id)
             {
-                throw new UnauthorizedAccessException("This field is not assigned to you.");
+                throw new UnauthorizedAccessException(
+                    "This field is not assigned to you.");
             }
 
-            var expectedKind = field.FieldType
-            switch
-            {
-                FieldType.Signature => AppliedMarkKind.Signature,
+            /*
+             * FieldType ilə request.Kind bir-birinə
+             * uyğun olmalıdır.
+             */
+            var expectedKind =
+                field.FieldType switch
+                {
+                    FieldType.Signature =>
+                        AppliedMarkKind.Signature,
 
-                FieldType.Initial => AppliedMarkKind.Initial,
+                    FieldType.Initial =>
+                        AppliedMarkKind.Initial,
 
-                FieldType.Stamp => AppliedMarkKind.Stamp,
+                    FieldType.Stamp =>
+                        AppliedMarkKind.Stamp,
 
-                _ =>
-                throw new InvalidOperationException("This field is not a signature field.")
-            };
+                    _ =>
+                        throw new InvalidOperationException(
+                            "This field is not a signature field.")
+                };
 
             if (request.Kind != expectedKind)
             {
-                throw new InvalidOperationException("The applied mark type does not match the field type.");
+                throw new InvalidOperationException(
+                    "The applied mark type does not match the field type.");
             }
-            string appliedBlobPath;
 
-            if (request.Kind == AppliedMarkKind.Signature || request.Kind == AppliedMarkKind.Initial)
+            /*
+             * Source və immutable snapshot metadata.
+             */
+            string sourceBlobPath;
+
+            Guid? sourceSignatureId = null;
+            Guid? sourceStampId = null;
+
+            SignatureType? signatureTypeSnapshot = null;
+
+            string? typedTextSnapshot = null;
+            string? fontKeySnapshot = null;
+
+            /*
+             * Signature / Initial
+             */
+            if (
+                request.Kind == AppliedMarkKind.Signature ||
+                request.Kind == AppliedMarkKind.Initial)
             {
                 if (!request.SourceSignatureId.HasValue)
                 {
-                    throw new ArgumentException("Source signature is required.");
+                    throw new ArgumentException(
+                        "Source signature is required.");
                 }
 
-                var signature = await _signatureRepository.GetByIdAsync(
-                request.SourceSignatureId.Value, cancellationToken);
+                var signature =
+                    await _signatureRepository.GetByIdAsync(
+                        request.SourceSignatureId.Value,
+                        cancellationToken);
 
-                if (signature is null || !signature.IsActive || signature.UserId != _currentUser.UserId)
+                if (
+                    signature is null ||
+                    !signature.IsActive ||
+                    signature.UserId != _currentUser.UserId)
                 {
-                    throw new UnauthorizedAccessException("Signature was not found or does not belong to you.");
+                    throw new UnauthorizedAccessException(
+                        "Signature was not found or does not belong to you.");
                 }
 
-                appliedBlobPath = signature.BlobPath;
+                /*
+                 * Signature field-ə Signature,
+                 * Initial field-ə Initials source istifadə edilməlidir.
+                 */
+                if (
+                    request.Kind == AppliedMarkKind.Signature &&
+                    signature.Kind != SignatureKind.Signature)
+                {
+                    throw new InvalidOperationException(
+                        "A signature field requires a signature source.");
+                }
 
-                request.SourceStampId = null;
+                if (
+                    request.Kind == AppliedMarkKind.Initial &&
+                    signature.Kind != SignatureKind.Initials)
+                {
+                    throw new InvalidOperationException(
+                        "An initials field requires an initials source.");
+                }
+
+                sourceSignatureId =
+                    signature.Id;
+
+                sourceBlobPath =
+                    signature.BlobPath;
+
+                signatureTypeSnapshot =
+                    signature.Type;
+
+                /*
+                 * Typed signature üçün text/font metadata-nı
+                 * həmin anda snapshot edirik.
+                 */
+                if (signature.Type == SignatureType.Typed)
+                {
+                    if (string.IsNullOrWhiteSpace(
+                            signature.TypedText))
+                    {
+                        throw new InvalidOperationException(
+                            "Typed signature metadata is missing.");
+                    }
+
+                    typedTextSnapshot =
+                        signature.TypedText.Trim();
+
+                    fontKeySnapshot =
+                        NormalizeSignatureFontKey(
+                            signature.FontKey);
+                }
             }
+
+            /*
+             * Stamp
+             */
             else
             {
                 if (!request.SourceStampId.HasValue)
                 {
-                    throw new ArgumentException("Source stamp is required.");
+                    throw new ArgumentException(
+                        "Source stamp is required.");
                 }
 
-                var stamp = await _stampRepository.GetByIdAsync(
-                request.SourceStampId.Value, cancellationToken);
+                var stamp =
+                    await _stampRepository.GetByIdAsync(
+                        request.SourceStampId.Value,
+                        cancellationToken);
 
-                if (stamp is null || !stamp.IsActive)
+                if (
+                    stamp is null ||
+                    !stamp.IsActive)
                 {
-                    throw new KeyNotFoundException("Stamp was not found.");
+                    throw new KeyNotFoundException(
+                        "Stamp was not found.");
                 }
 
-                appliedBlobPath = stamp.BlobPath;
+                sourceStampId =
+                    stamp.Id;
 
-                request.SourceSignatureId = null;
+                sourceBlobPath =
+                    stamp.BlobPath;
             }
 
-            var existingMarks = await _envelopeAppliedSignature.FindAsync(
-            x => x.EnvelopeFieldId == field.Id, cancellationToken);
+            /*
+             * Source asset-in immutable envelope copy-si:
+             *
+             * - ayrıca BlobPath
+             * - ContentType
+             * - SHA-256 hash
+             */
+            var snapshot =
+                await SnapshotAppliedMarkAsync(
+                    sourceBlobPath,
+                    envelopeId,
+                    cancellationToken);
 
-            var appliedMark = existingMarks.FirstOrDefault();
+            /*
+             * Field-də əvvəl mark varsa replace edirik.
+             * Repository FindAsync AsNoTracking olduğu üçün
+             * mövcud entity sonda Update edilməlidir.
+             */
+            var existingMarks =
+                await _envelopeAppliedSignature.FindAsync(
+                    x =>
+                        x.EnvelopeFieldId == field.Id &&
+                        x.EnvelopeId == envelopeId,
+                    cancellationToken);
 
-            var isNew = appliedMark is null;
+            var appliedMark =
+                existingMarks.FirstOrDefault();
+
+            var isNew =
+                appliedMark is null;
+
+            var oldAppliedBlobPath =
+                appliedMark?.AppliedBlobPath;
 
             if (isNew)
             {
-                appliedMark = new EnvelopeAppliedSignature
+                appliedMark =
+                    new EnvelopeAppliedSignature
+                    {
+                        Id =
+                            Guid.NewGuid(),
+
+                        EnvelopeId =
+                            envelope.Id,
+
+                        EnvelopeFieldId =
+                            field.Id,
+
+                        RecipientId =
+                            recipient.Id
+                    };
+            }
+            else if (appliedMark!.RecipientId != recipient.Id)
+            {
+                /*
+                 * Normalda bu hal baş verməməlidir.
+                 * Evidence başqa recipient-ə aid olsa
+                 * onu overwrite etmirik.
+                 */
+                try
                 {
-                    Id = Guid.NewGuid(),
+                    await _fileStorage.DeleteAsync(
+                        snapshot.BlobPath,
+                        cancellationToken);
+                }
+                catch
+                {
+                    // Əsas validation error-u gizlətmirik.
+                }
 
-                    EnvelopeId = envelope.Id,
-
-                    EnvelopeFieldId = field.Id,
-
-                    RecipientId = recipient.Id
-                };
+                throw new InvalidOperationException(
+                    "The existing applied mark belongs to another recipient.");
             }
 
-            appliedMark!.AppliedByUserId = _currentUser.UserId;
+            var now =
+                DateTimeOffset.UtcNow;
 
-            appliedMark.Kind = request.Kind;
+            /*
+             * Evidence metadata.
+             */
+            appliedMark!.AppliedByUserId =
+                _currentUser.UserId;
 
-            appliedMark.SourceSignatureId = request.SourceSignatureId;
+            appliedMark.Kind =
+                request.Kind;
 
-            appliedMark.SourceStampId = request.SourceStampId;
+            appliedMark.SourceSignatureId =
+                sourceSignatureId;
 
-            appliedMark.AppliedBlobPath = appliedBlobPath;
+            appliedMark.SourceStampId =
+                sourceStampId;
 
-            appliedMark.AppliedAt = DateTimeOffset.UtcNow;
+            appliedMark.SignatureTypeSnapshot =
+                signatureTypeSnapshot;
 
-            if (isNew)
+            appliedMark.TypedTextSnapshot =
+                typedTextSnapshot;
+
+            appliedMark.FontKeySnapshot =
+                fontKeySnapshot;
+
+            appliedMark.AppliedBlobPath =
+                snapshot.BlobPath;
+
+            appliedMark.AppliedContentType =
+                snapshot.ContentType;
+
+            appliedMark.AppliedHash =
+                snapshot.Hash;
+
+            appliedMark.AppliedAt =
+                now;
+
+            try
             {
-                await _envelopeAppliedSignature.AddAsync(
-                appliedMark, cancellationToken);
+                if (isNew)
+                {
+                    await _envelopeAppliedSignature.AddAsync(
+                        appliedMark,
+                        cancellationToken);
+                }
+                else
+                {
+                    _envelopeAppliedSignature.Update(
+                        appliedMark);
+                }
+
+                await _unitOfWork.SaveChangesAsync(
+                    cancellationToken);
             }
-            else
+            catch
             {
-                _envelopeAppliedSignature.Update(
-                appliedMark);
+                /*
+                 * Snapshot storage-a upload olunub,
+                 * amma DB save fail olubsa orphan
+                 * file saxlamırıq.
+                 */
+                try
+                {
+                    await _fileStorage.DeleteAsync(
+                        snapshot.BlobPath,
+                        cancellationToken);
+                }
+                catch
+                {
+                    // Cleanup error əsas exception-u gizlətməsin.
+                }
+
+                throw;
             }
 
-            await _unitOfWork.SaveChangesAsync(
-            cancellationToken);
+            /*
+             * Replace uğurla DB-yə yazıldıqdan sonra
+             * əvvəlki immutable copy-ni silirik.
+             *
+             * Saved Signature/Stamp source-a toxunmuruq.
+             */
+            if (
+                !isNew &&
+                !string.IsNullOrWhiteSpace(
+                    oldAppliedBlobPath) &&
+                !string.Equals(
+                    oldAppliedBlobPath,
+                    snapshot.BlobPath,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                var normalizedOldPath =
+                    oldAppliedBlobPath
+                        .Replace('\\', '/')
+                        .TrimStart('/');
+
+                var appliedMarksPrefix =
+                    $"envelopes/{envelopeId:N}/applied-marks/";
+
+                if (normalizedOldPath.StartsWith(
+                        appliedMarksPrefix,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        await _fileStorage.DeleteAsync(
+                            oldAppliedBlobPath,
+                            cancellationToken);
+                    }
+                    catch
+                    {
+                        /*
+                         * DB artıq yeni evidence-a keçirilib.
+                         * Köhnə blob cleanup problemi
+                         * signing əməliyyatını fail etməsin.
+                         */
+                    }
+                }
+            }
 
             return new SigningAppliedSignatureDto
             {
-                Id = appliedMark.Id,
+                Id =
+                    appliedMark.Id,
 
-                Kind = appliedMark.Kind,
+                Kind =
+                    appliedMark.Kind,
 
-                AppliedAt = appliedMark.AppliedAt,
-                SourceSignatureId = appliedMark.SourceSignatureId,
-                SourceStampId = appliedMark.SourceStampId,
+                AppliedAt =
+                    appliedMark.AppliedAt,
+
+                SourceSignatureId =
+                    appliedMark.SourceSignatureId,
+
+                SourceStampId =
+                    appliedMark.SourceStampId,
+                SignatureTypeSnapshot =
+    appliedMark.SignatureTypeSnapshot,
+
+                TypedTextSnapshot =
+    appliedMark.TypedTextSnapshot,
+
+                FontKeySnapshot =
+    appliedMark.FontKeySnapshot,
+
+                AppliedContentType =
+    appliedMark.AppliedContentType,
             };
-
         }
 
-        public async Task<CreatedSigningSignatureDto> CreateSignatureAsync(CreateSigningSignatureRequest request, CancellationToken cancellationToken =default)
+        private async Task<string>
+    CopyAppliedMarkToStorageAsync(
+        string sourceBlobPath,
+        Guid envelopeId,
+        CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(
+                    sourceBlobPath))
+            {
+                throw new InvalidOperationException(
+                    "Source mark path is missing.");
+            }
+
+            await using var sourceStream =
+                await _fileStorage.OpenReadAsync(
+                    sourceBlobPath,
+                    cancellationToken);
+
+            var extension =
+                Path.GetExtension(
+                    sourceBlobPath)
+                .ToLowerInvariant();
+
+            var contentType =
+                extension switch
+                {
+                    ".svg" => "image/svg+xml",
+                    ".png" => "image/png",
+                    ".jpg" => "image/jpeg",
+                    ".jpeg" => "image/jpeg",
+                    _ => "application/octet-stream"
+                };
+
+            return await _fileStorage.UploadAsync(
+                sourceStream,
+                $"applied-mark{extension}",
+                contentType,
+                $"envelopes/{envelopeId:N}/applied-marks",
+                cancellationToken);
+        }
+        private static string NormalizeSignatureFontKey(
+    string? fontKey)
+        {
+            return fontKey?
+                .Trim()
+                .ToLowerInvariant()
+                switch
+            {
+                "great-vibes" =>
+                    "great-vibes",
+
+                "mrs-saint-delafield" =>
+                    "mrs-saint-delafield",
+
+                "caveat" =>
+                    "caveat",
+
+                _ =>
+                    "great-vibes"
+            };
+        }
+        public async Task<CreatedSigningSignatureDto> CreateSignatureAsync(
+    CreateSigningSignatureRequest request,
+    CancellationToken cancellationToken = default)
         {
             EnsureAuthenticated();
 
-            if (request.Kind != SignatureKind.Signature && request.Kind != SignatureKind.Initials)
+            if (
+                request.Kind != SignatureKind.Signature &&
+                request.Kind != SignatureKind.Initials)
             {
-                throw new ArgumentException("Invalid signature kind.");
+                throw new ArgumentException(
+                    "Invalid signature kind.");
             }
 
-            if (request.Type != SignatureType.Typed && request.Type != SignatureType.Drawn)
+            if (
+                request.Type != SignatureType.Typed &&
+                request.Type != SignatureType.Drawn)
             {
-                throw new ArgumentException("Only typed and drawn signatures can be created here.");
+                throw new ArgumentException(
+                    "Only typed and drawn signatures can be created here.");
             }
 
             string blobPath;
 
+            string? typedText = null;
+            string? fontKey = null;
+
             if (request.Type == SignatureType.Typed)
             {
-                if (string.IsNullOrWhiteSpace(request.TypedText))
+                if (string.IsNullOrWhiteSpace(
+                        request.TypedText))
                 {
-                    throw new ArgumentException("Typed signature text is required.");
+                    throw new ArgumentException(
+                        "Typed signature text is required.");
                 }
 
-                blobPath = await _signatureAssetStorage.SaveTypedAsync(
-                _currentUser.UserId, request.TypedText, request.FontKey, cancellationToken);
+                typedText =
+                    request.TypedText.Trim();
+
+                if (typedText.Length > 250)
+                {
+                    throw new ArgumentException(
+                        "Typed signature text is too long.");
+                }
+
+                fontKey =
+                    NormalizeSignatureFontKey(
+                        request.FontKey);
+
+                blobPath =
+                    await _signatureAssetStorage.SaveTypedAsync(
+                        _currentUser.UserId,
+                        typedText,
+                        fontKey,
+                        cancellationToken);
             }
             else
             {
-                if (string.IsNullOrWhiteSpace(request.ImageDataUrl))
+                if (string.IsNullOrWhiteSpace(
+                        request.ImageDataUrl))
                 {
-                    throw new ArgumentException("Drawn signature image is required.");
+                    throw new ArgumentException(
+                        "Drawn signature image is required.");
                 }
 
-                blobPath = await _signatureAssetStorage.SaveDrawnAsync(
-                _currentUser.UserId, request.ImageDataUrl, cancellationToken);
+                blobPath =
+                    await _signatureAssetStorage.SaveDrawnAsync(
+                        _currentUser.UserId,
+                        request.ImageDataUrl,
+                        cancellationToken);
             }
 
-            var now = DateTimeOffset.UtcNow;
+            var now =
+                DateTimeOffset.UtcNow;
 
-            var signature = new Signature
-            {
-                Id = Guid.NewGuid(),
+            var signature =
+                new Signature
+                {
+                    Id =
+                        Guid.NewGuid(),
 
-                UserId = _currentUser.UserId,
+                    UserId =
+                        _currentUser.UserId,
 
-                Kind = request.Kind,
+                    Kind =
+                        request.Kind,
 
-                Type = request.Type,
+                    Type =
+                        request.Type,
 
-                BlobPath = blobPath,
+                    BlobPath =
+                        blobPath,
 
-                IsDefault = false,
+                    TypedText =
+                        typedText,
 
-                IsActive = true,
+                    FontKey =
+                        fontKey,
 
-                CreatedAt = now,
+                    IsDefault =
+                        false,
 
-                UpdatedAt = now
-            };
+                    IsActive =
+                        true,
+
+                    CreatedAt =
+                        now,
+
+                    UpdatedAt =
+                        now
+                };
 
             await _signatureRepository.AddAsync(
-            signature, cancellationToken);
+                signature,
+                cancellationToken);
 
-            await _unitOfWork.SaveChangesAsync(
-            cancellationToken);
+            try
+            {
+                await _unitOfWork.SaveChangesAsync(
+                    cancellationToken);
+            }
+            catch
+            {
+                try
+                {
+                    await _fileStorage.DeleteAsync(
+                        blobPath,
+                        cancellationToken);
+                }
+                catch
+                {
+                }
+
+                throw;
+            }
 
             return new CreatedSigningSignatureDto
             {
-                Id = signature.Id,
+                Id =
+                    signature.Id,
 
-                Kind = signature.Kind,
+                Kind =
+                    signature.Kind,
 
-                Type = signature.Type,
+                Type =
+                    signature.Type,
 
-                ContentUrl = $"/api/signing/signatures/{signature.Id}/content",
+                ContentUrl =
+                    $"/api/signing/signatures/{signature.Id}/content",
 
-                CreatedAt = signature.CreatedAt
+                CreatedAt =
+                    signature.CreatedAt
             };
         }
+        private sealed record AppliedMarkStorageResult(
+    string BlobPath,
+    string ContentType,
+    string Hash);
+        private async Task<AppliedMarkStorageResult>
+    SnapshotAppliedMarkAsync(
+        string sourceBlobPath,
+        Guid envelopeId,
+        CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(
+                    sourceBlobPath))
+            {
+                throw new InvalidOperationException(
+                    "Source mark path is missing.");
+            }
 
+            await using var sourceStream =
+                await _fileStorage.OpenReadAsync(
+                    sourceBlobPath,
+                    cancellationToken);
+
+            using var memory =
+                new MemoryStream();
+
+            await sourceStream.CopyToAsync(
+                memory,
+                cancellationToken);
+
+            var bytes =
+                memory.ToArray();
+
+            if (bytes.Length == 0)
+            {
+                throw new InvalidOperationException(
+                    "Source mark asset is empty.");
+            }
+
+            var hash =
+                Convert.ToHexString(
+                    System.Security.Cryptography
+                        .SHA256.HashData(bytes))
+                .ToLowerInvariant();
+
+            var extension =
+                Path.GetExtension(
+                    sourceBlobPath)
+                .ToLowerInvariant();
+
+            var contentType =
+                extension switch
+                {
+                    ".svg" => "image/svg+xml",
+                    ".png" => "image/png",
+                    ".jpg" => "image/jpeg",
+                    ".jpeg" => "image/jpeg",
+
+                    _ => throw new InvalidOperationException(
+                        $"Unsupported mark asset format '{extension}'.")
+                };
+
+            await using var uploadStream =
+                new MemoryStream(
+                    bytes,
+                    writable: false);
+
+            var blobPath =
+                await _fileStorage.UploadAsync(
+                    uploadStream,
+                    $"applied-mark{extension}",
+                    contentType,
+                    $"envelopes/{envelopeId:N}/applied-marks",
+                    cancellationToken);
+
+            return new AppliedMarkStorageResult(
+                blobPath,
+                contentType,
+                hash);
+        }
         public async Task<(byte[] Content, string ContentType)> GetSignatureContentAsync(Guid signatureId, CancellationToken cancellationToken =
 default)
         {
@@ -817,13 +1398,7 @@ default)
                     "Envelope was not found.");
             }
 
-            if (
-                envelope.Status != EnvelopeStatus.Sent &&
-                envelope.Status != EnvelopeStatus.InProgress)
-            {
-                throw new InvalidOperationException(
-                    "This envelope is not available for signing.");
-            }
+            EnsureEnvelopeAvailableForSigning(envelope);
 
             var recipients =
                 await _envelopeRecipient.FindAsync(
@@ -1014,6 +1589,254 @@ default)
                     updatedRecipient.DeclinedAt
             };
         }
+     //   private static List<FinalPdfRenderField> BuildFinalPdfRenderFields(
+     //IEnumerable<Fields> fields,
+     //IEnumerable<EnvelopeFieldValue> values,
+     //IEnumerable<EnvelopeAppliedSignature> appliedMarks)
+     //   {
+     //       var valuesByFieldId =
+     //           values
+     //               .GroupBy(x => x.EnvelopeFieldId)
+     //               .ToDictionary(
+     //                   x => x.Key,
+     //                   x => x.Last());
 
+     //       var marksByFieldId =
+     //           appliedMarks
+     //               .GroupBy(x => x.EnvelopeFieldId)
+     //               .ToDictionary(
+     //                   x => x.Key,
+     //                   x => x.Last());
+
+     //       var result =
+     //           new List<FinalPdfRenderField>();
+
+     //       foreach (var field in fields)
+     //       {
+     //           valuesByFieldId.TryGetValue(
+     //               field.Id,
+     //               out var value);
+
+     //           marksByFieldId.TryGetValue(
+     //               field.Id,
+     //               out var mark);
+
+     //           result.Add(
+     //               new FinalPdfRenderField
+     //               {
+     //                   FieldId =
+     //                       field.Id,
+
+     //                   PageNumber =
+     //                       field.PageNumber,
+
+     //                   X =
+     //                       field.X,
+
+     //                   Y =
+     //                       field.Y,
+
+     //                   Width =
+     //                       field.Width,
+
+     //                   Height =
+     //                       field.Height,
+
+     //                   FieldType =
+     //                       field.FieldType,
+
+     //                   /*
+     //                    * Normal field values
+     //                    */
+     //                   ValueText =
+     //                       value?.ValueText,
+
+     //                   ValueNumber =
+     //                       value?.ValueNumber,
+
+     //                   ValueDate =
+     //                       value?.ValueDate,
+
+     //                   ValueBoolean =
+     //                       value?.ValueBoolean,
+
+     //                   /*
+     //                    * Immutable mark snapshot
+     //                    */
+     //                   AppliedBlobPath =
+     //                       mark?.AppliedBlobPath,
+
+     //                   AppliedContentType =
+     //                       mark?.AppliedContentType,
+
+     //                   SignatureTypeSnapshot =
+     //                       mark?.SignatureTypeSnapshot,
+
+     //                   TypedTextSnapshot =
+     //                       mark?.TypedTextSnapshot,
+
+     //                   FontKeySnapshot =
+     //                       mark?.FontKeySnapshot
+     //               });
+     //       }
+
+     //       return result;
+     //   }
+        public async Task<byte[]> GenerateTestFinalPdfAsync(
+    Guid envelopeId,
+    Guid documentId,
+    CancellationToken cancellationToken = default)
+        {
+            if (envelopeId == Guid.Empty)
+            {
+                throw new ArgumentException(
+                    "Envelope id is required.");
+            }
+
+            if (documentId == Guid.Empty)
+            {
+                throw new ArgumentException(
+                    "Document id is required.");
+            }
+
+            var document =
+                await _envelopeDocument.GetByIdAsync(
+                    documentId,
+                    cancellationToken);
+
+            if (
+                document is null ||
+                document.EnvelopeId != envelopeId)
+            {
+                throw new KeyNotFoundException(
+                    "Document was not found.");
+            }
+
+            /*
+             * IMPORTANT:
+             * OriginalFileName storage path deyil.
+             *
+             * PDF storage-dan yalnız
+             * OriginalBlobPath ilə açılır.
+             */
+            if (string.IsNullOrWhiteSpace(
+                    document.OriginalBlobPath))
+            {
+                throw new FileNotFoundException(
+                    $"Original document storage path is missing for document '{document.Id}'.");
+            }
+
+            var fields =
+                (
+                    await _envelopeField.FindAsync(
+                        x =>
+                            x.EnvelopeId == envelopeId &&
+                            x.EnvelopeDocumentId == documentId,
+                        cancellationToken)
+                ).ToList();
+
+            var fieldIds =
+                fields
+                    .Select(x => x.Id)
+                    .ToList();
+
+            List<EnvelopeFieldValue> values;
+
+            List<EnvelopeAppliedSignature> appliedMarks;
+
+            if (fieldIds.Count == 0)
+            {
+                values =
+                    new List<EnvelopeFieldValue>();
+
+                appliedMarks =
+                    new List<EnvelopeAppliedSignature>();
+            }
+            else
+            {
+                values =
+                    (
+                        await _envelopeFieldValue.FindAsync(
+                            x =>
+                                fieldIds.Contains(
+                                    x.EnvelopeFieldId),
+                            cancellationToken)
+                    ).ToList();
+
+                appliedMarks =
+                    (
+                        await _envelopeAppliedSignature.FindAsync(
+                            x =>
+                                x.EnvelopeId == envelopeId &&
+                                fieldIds.Contains(
+                                    x.EnvelopeFieldId),
+                            cancellationToken)
+                    ).ToList();
+            }
+
+            var renderFields =
+    FinalPdfRenderFieldMapper.Map(
+        fields,
+        values,
+        appliedMarks);
+
+            
+            await using var originalStream =
+                await _fileStorage.OpenReadAsync(
+                    document.OriginalBlobPath,
+                    cancellationToken);
+
+            /*
+             * Renderer üçün seekable memory stream istifadə edirik.
+             * Local və Azure Blob provider davranışından
+             * asılı qalmırıq.
+             */
+            using var originalPdf =
+                new MemoryStream();
+
+            await originalStream.CopyToAsync(
+                originalPdf,
+                cancellationToken);
+
+            originalPdf.Position = 0;
+
+            /*
+             * Yeni 6.4E contract:
+             *
+             * Stream
+             * +
+             * FinalPdfRenderField[]
+             * +
+             * CancellationToken
+             */
+            var renderedPdf =
+                await _finalPdfRenderer.RenderAsync(
+                    originalPdf,
+                    renderFields,
+                    cancellationToken);
+
+            return renderedPdf;
+        }
+
+        private static void EnsureEnvelopeAvailableForSigning(
+    Envelope envelope)
+        {
+            if (
+                envelope.Status != EnvelopeStatus.Sent &&
+                envelope.Status != EnvelopeStatus.InProgress)
+            {
+                throw new InvalidOperationException(
+                    "This envelope is not available for signing.");
+            }
+
+            if (
+                envelope.ExpiresAt.HasValue &&
+                envelope.ExpiresAt.Value <=
+                    DateTimeOffset.UtcNow)
+            {
+                throw new InvalidOperationException(
+                    "This envelope has expired.");
+            }
+        }
     }
 }

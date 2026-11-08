@@ -98,6 +98,9 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
 
+                    b.Property<DateTimeOffset?>("FinalizedAt")
+                        .HasColumnType("datetimeoffset");
+
                     b.Property<int>("Order")
                         .HasColumnType("int");
 
@@ -135,6 +138,17 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("CertificateBlobPath")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTimeOffset?>("CertificateGeneratedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("CertificateHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
 
                     b.Property<DateTimeOffset?>("CompletedAt")
                         .HasColumnType("datetimeoffset");
@@ -220,6 +234,10 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("AppliedByUserId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("AppliedContentType")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
                     b.Property<string>("AppliedHash")
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
@@ -230,17 +248,28 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("EnvelopeId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("FontKeySnapshot")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
                     b.Property<int>("Kind")
                         .HasColumnType("int");
 
                     b.Property<Guid>("RecipientId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<int?>("SignatureTypeSnapshot")
+                        .HasColumnType("int");
+
                     b.Property<Guid?>("SourceSignatureId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<Guid?>("SourceStampId")
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("TypedTextSnapshot")
+                        .HasMaxLength(250)
+                        .HasColumnType("nvarchar(250)");
 
                     b.HasKey("Id");
 
@@ -308,6 +337,53 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.HasIndex("FilledByUserId");
 
                     b.ToTable("EnvelopeFieldValues", (string)null);
+                });
+
+            modelBuilder.Entity("LV.SignFlow.Domain.Entities.Envelopes.EnvelopeFinalization", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("EnvelopeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<Guid?>("LeaseId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset?>("LeaseUntil")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset?>("NextAttemptAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EnvelopeId")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "NextAttemptAt");
+
+                    b.ToTable("EnvelopeFinalizations", (string)null);
                 });
 
             modelBuilder.Entity("LV.SignFlow.Domain.Entities.Envelopes.EnvelopeRoutingCondition", b =>
@@ -713,6 +789,10 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
 
+                    b.Property<string>("FontKey")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
 
@@ -724,6 +804,10 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
 
                     b.Property<int>("Type")
                         .HasColumnType("int");
+
+                    b.Property<string>("TypedText")
+                        .HasMaxLength(250)
+                        .HasColumnType("nvarchar(250)");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("datetimeoffset");
@@ -1855,6 +1939,17 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.Navigation("FilledByUser");
                 });
 
+            modelBuilder.Entity("LV.SignFlow.Domain.Entities.Envelopes.EnvelopeFinalization", b =>
+                {
+                    b.HasOne("LV.SignFlow.Domain.Entities.Envelopes.Envelope", "Envelope")
+                        .WithOne("Finalization")
+                        .HasForeignKey("LV.SignFlow.Domain.Entities.Envelopes.EnvelopeFinalization", "EnvelopeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Envelope");
+                });
+
             modelBuilder.Entity("LV.SignFlow.Domain.Entities.Envelopes.EnvelopeRoutingCondition", b =>
                 {
                     b.HasOne("LV.SignFlow.Domain.Entities.Envelopes.EnvelopeRoutingRule", "EnvelopeRoutingRule")
@@ -2283,6 +2378,8 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.Navigation("Events");
 
                     b.Navigation("Fields");
+
+                    b.Navigation("Finalization");
 
                     b.Navigation("Recipients");
 

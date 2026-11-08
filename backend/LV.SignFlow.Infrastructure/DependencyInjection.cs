@@ -1,6 +1,9 @@
 ﻿using LV.SignFlow.Application.Common.Interfaces;
+using LV.SignFlow.Application.Finalization;
 using LV.SignFlow.Application.Templates;
+using LV.SignFlow.Infrastructure.Pdf;
 using LV.SignFlow.Infrastructure.Persistence;
+using LV.SignFlow.Infrastructure.Persistence.Finalization;
 using LV.SignFlow.Infrastructure.Persistence.Repositories;
 using LV.SignFlow.Infrastructure.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -29,9 +32,61 @@ namespace LV.SignFlow.Infrastructure
             services.AddScoped(typeof(IRepository<>),typeof(Repository<>));
             services.AddScoped<IUnitOfWork,UnitOfWork>();
             services.AddScoped<ITemplateRepository, TemplateRepository>();
-            services.AddScoped<IFileStorage, LocalFileStorage>();
-            services.AddScoped<ISignatureAssetStorage, LocalSignatureAssetStorage>();
-            
+            services.AddScoped<IFinalPdfRenderer, PdfSharpFinalPdfRenderer>();
+            services.AddScoped<ICompletionCertificateGenerator, PdfSharpCompletionCertificateGenerator>();
+            services.AddScoped<IEnvelopeFinalizationProcessor,EnvelopeFinalizationProcessor>();
+            services.AddScoped<IEnvelopeFinalizationQueue,EfEnvelopeFinalizationQueue>();
+            services.AddScoped<ICompletionCertificateDataBuilder,CompletionCertificateDataBuilder>();
+            services.Configure<StorageOptions>(options =>
+            {
+                options.Provider =
+                    configuration["Storage:Provider"]
+                    ?? "Local";
+
+                options.LocalRootPath =
+                    configuration["Storage:LocalRootPath"];
+
+                options.ServiceUri =
+                    configuration["Storage:ServiceUri"];
+
+                options.ContainerName =
+                    configuration["Storage:ContainerName"]
+                    ?? "lv-signflow";
+
+                options.ManagedIdentityClientId =
+                    configuration[
+                        "Storage:ManagedIdentityClientId"];
+            });
+
+            var storageProvider =
+                configuration["Storage:Provider"]
+                ?? "Local";
+
+            if (storageProvider.Equals(
+                    "Local",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                services.AddSingleton<
+                    IFileStorage,
+                    LocalFileStorage>();
+            }
+            else if (storageProvider.Equals(
+                         "AzureBlob",
+                         StringComparison.OrdinalIgnoreCase))
+            {
+                services.AddScoped<
+                    IFileStorage,
+                    AzureBlobFileStorage>();
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"Unsupported storage provider: {storageProvider}");
+            }
+
+            services.AddScoped<
+                ISignatureAssetStorage,
+                SignatureAssetStorage>();
 
             return services;
         }

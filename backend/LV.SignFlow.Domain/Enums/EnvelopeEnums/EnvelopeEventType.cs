@@ -17,6 +17,8 @@ namespace LV.SignFlow.Domain.Enums.EnvelopeEnums
         ReminderSent = 9,
         Completed = 10,
         Voided = 11,
-        Downloaded = 12
+        Downloaded = 12,
+        Expired = 13,
+        DraftDeleted = 14
     }
 }

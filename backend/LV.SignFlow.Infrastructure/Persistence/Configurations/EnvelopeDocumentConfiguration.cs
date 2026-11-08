@@ -35,6 +35,7 @@ namespace LV.SignFlow.Infrastructure.Persistence.Configurations
 
             builder.Property(x => x.FinalHash)
                 .HasMaxLength(128);
+            builder.Property(x => x.FinalizedAt);
 
             builder.HasOne(e => e.Envelope)
                 .WithMany(e=>e.Documents)

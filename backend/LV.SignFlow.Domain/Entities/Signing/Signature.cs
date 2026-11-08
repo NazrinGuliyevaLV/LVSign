@@ -23,6 +23,9 @@ namespace LV.SignFlow.Domain.Entities.Signing
         public DateTimeOffset CreatedAt { get; set; }
 
         public DateTimeOffset UpdatedAt { get; set; }
+        public string? TypedText { get; set; }
+
+        public string? FontKey { get; set; }
 
         public SignatureKind Kind { get; set; }= SignatureKind.Signature;
         public User User { get; set; } = null!;

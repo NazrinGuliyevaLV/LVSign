@@ -1,4 +1,5 @@
 ﻿using LV.SignFlow.Application.Common.Interfaces;
+using LV.SignFlow.Application.Common.Models;
 using LV.SignFlow.Application.Envelopes.Dtos;
 using LV.SignFlow.Application.Envelopes.Requests;
 using LV.SignFlow.Application.Signing.Dtos;
@@ -10,6 +11,7 @@ using LV.SignFlow.Domain.Entities.Users;
 using LV.SignFlow.Domain.Enums.EnvelopeEnums;
 using LV.SignFlow.Domain.Enums.SigningEnums;
 using LV.SignFlow.Domain.Enums.TemplateEnums;
+using LV.SignFlow.Domain.Policies;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -48,8 +50,14 @@ namespace LV.SignFlow.Application.Envelopes
         private readonly IRepository<EnvelopeRoutingRuleSet> _envelopeRoutingRuleSet;
         private readonly IRepository<EnvelopeRoutingCondition> _envelopeRoutingCondition;
         private readonly IRepository<EnvelopeAppliedSignature> _appliedSignatureRepository;
+        public IRepository<EnvelopeFieldValue> _envelopeFieldValue;
+        public IRepository<EnvelopeAppliedSignature> _envelopeAppliedSignature;
+        private readonly IRepository<EnvelopeFinalization> _envelopeFinalizationRepository;
+        private readonly IFinalPdfRenderer _finalPdfRenderer;
+        private readonly ICompletionCertificateGenerator _completionCertificateGenerator;
 
-        public EnvelopeService(ICurrentUser currentUser, IUnitOfWork unitOfWork, IFileStorage fileStorage, IRepository<Envelope> envelopeRepository, IRepository<Fields> envelopeField, IRepository<Recipients> envelopeRecipient, IRepository<Documents> envelopeDocument, IRepository<User> userRepository, IRepository<TemplateShare> templateShareRepository, ITemplateRepository templateRepository, IRepository<TemplateDocument> templateDocumentRepository, IRepository<TemplateField> templateFieldRepository, IRepository<TemplateRecipientRole> templateRecipientRoleRepository, IRepository<TemplateRoutingRule> templateRoutingRuleRepository, IRepository<TemplateRoutingRuleSet> templateRoutingRuleSetRepository, IRepository<EnvelopeRoutingRule> envelopeRoutingRuleRepository, IRepository<EnvelopeRoutingRuleSet> envelopeRoutingRuleSetRepository, IRepository<TemplateRoutingCondition> templateRoutingConditionRepository, IRepository<EnvelopeRoutingCondition> envelopeRoutingConditionRepository, IRepository<Events> eventRepository, IRepository<StatusHistory> statusHistoryRepository, IRepository<EnvelopeFieldValue> fieldValueRepository, IRepository<Signature> signatureRepository, IRepository<Stamps> stampRepository, IRepository<EnvelopeAppliedSignature> appliedSignatureRepository, IRepository<EnvelopeRoutingRule> envelopeRoutingRule, IRepository<EnvelopeRoutingRuleSet> envelopeRoutingRuleSet, IRepository<EnvelopeRoutingCondition> envelopeRoutingCondition)
+
+        public EnvelopeService(ICurrentUser currentUser, IUnitOfWork unitOfWork, IFileStorage fileStorage, IRepository<Envelope> envelopeRepository, IRepository<Fields> envelopeField, IRepository<Recipients> envelopeRecipient, IRepository<Documents> envelopeDocument, IRepository<User> userRepository, IRepository<TemplateShare> templateShareRepository, ITemplateRepository templateRepository, IRepository<TemplateDocument> templateDocumentRepository, IRepository<TemplateField> templateFieldRepository, IRepository<TemplateRecipientRole> templateRecipientRoleRepository, IRepository<TemplateRoutingRule> templateRoutingRuleRepository, IRepository<TemplateRoutingRuleSet> templateRoutingRuleSetRepository, IRepository<EnvelopeRoutingRule> envelopeRoutingRuleRepository, IRepository<EnvelopeRoutingRuleSet> envelopeRoutingRuleSetRepository, IRepository<TemplateRoutingCondition> templateRoutingConditionRepository, IRepository<EnvelopeRoutingCondition> envelopeRoutingConditionRepository, IRepository<Events> eventRepository, IRepository<StatusHistory> statusHistoryRepository, IRepository<EnvelopeFieldValue> fieldValueRepository, IRepository<Signature> signatureRepository, IRepository<Stamps> stampRepository, IRepository<EnvelopeAppliedSignature> appliedSignatureRepository, IRepository<EnvelopeRoutingRule> envelopeRoutingRule, IRepository<EnvelopeRoutingRuleSet> envelopeRoutingRuleSet, IRepository<EnvelopeRoutingCondition> envelopeRoutingCondition, IFinalPdfRenderer finalPdfRenderer, IRepository<EnvelopeFieldValue> envelopeFieldValue, IRepository<EnvelopeAppliedSignature> envelopeAppliedSignature, ICompletionCertificateGenerator completionCertificateGenerator, IRepository<EnvelopeFinalization> envelopeFinalizationRepository)
         {
             _currentUser = currentUser;
             _unitOfWork = unitOfWork;
@@ -79,6 +87,11 @@ namespace LV.SignFlow.Application.Envelopes
             _envelopeRoutingRule = envelopeRoutingRule;
             _envelopeRoutingRuleSet = envelopeRoutingRuleSet;
             _envelopeRoutingCondition = envelopeRoutingCondition;
+            _finalPdfRenderer = finalPdfRenderer;
+            _envelopeFieldValue = envelopeFieldValue;
+            _envelopeAppliedSignature = envelopeAppliedSignature;
+            _completionCertificateGenerator = completionCertificateGenerator;
+            _envelopeFinalizationRepository = envelopeFinalizationRepository;
         }
 
         private void EnsureAuthenticated()
@@ -100,14 +113,15 @@ namespace LV.SignFlow.Application.Envelopes
             {
                 throw new ArgumentException("Reminder interval must be greater than zero.");
             }
+            var now = DateTimeOffset.UtcNow;
             var envelope = new Envelope()
             {
                 Id = Guid.NewGuid(),
                 Subject = request.Subject.Trim(),
                 Message = request.Message,
                 CreatedByUserId = _currentUser.UserId,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow,
+                CreatedAt = now,
+                UpdatedAt = now,
                 OrganizationId = _currentUser.OrganizationId,
                 IsDeleted = false,
                 SourceTemplateVersionId = null,
@@ -119,6 +133,53 @@ namespace LV.SignFlow.Application.Envelopes
             };
 
             await _envelopeRepository.AddAsync(envelope);
+            await _statusHistoryRepository.AddAsync(
+    new StatusHistory
+    {
+        Id = Guid.NewGuid(),
+
+        EnvelopeId =
+            envelope.Id,
+
+        PreviousStatus =
+            null,
+
+        NewStatus =
+            EnvelopeStatus.Draft,
+
+        ChangedByUserId =
+            _currentUser.UserId,
+
+        Reason =
+            "Envelope created.",
+
+        ChangedAt =
+            now
+    },
+    cancellationToken);
+
+            await _eventRepository.AddAsync(
+                new Events
+                {
+                    Id =
+                        Guid.NewGuid(),
+
+                    EnvelopeId =
+                        envelope.Id,
+
+                    EventType =
+                        EnvelopeEventType.Created,
+
+                    UserId =
+                        _currentUser.UserId,
+
+                    RecipientId =
+                        null,
+
+                    OccurredAt =
+                        now
+                },
+                cancellationToken);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
             return envelope.Id;
         }
@@ -321,9 +382,53 @@ namespace LV.SignFlow.Application.Envelopes
             {
                 throw new ArgumentException("Envelope was not found.");
             }
-            _envelopeRepository.Delete(envelope);
+            if (!EnvelopeStatusTransitionPolicy.CanDelete(
+           envelope.Status))
+            {
+                throw new InvalidOperationException(
+                    "Only draft envelopes can be deleted.");
+            }
 
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            var now =
+                DateTimeOffset.UtcNow;
+
+            envelope.IsDeleted =
+                true;
+
+            envelope.DeletedAt =
+                now;
+
+            envelope.UpdatedAt =
+                now;
+
+            _envelopeRepository.Update(
+                envelope);
+
+            await _eventRepository.AddAsync(
+                new Events
+                {
+                    Id =
+                        Guid.NewGuid(),
+
+                    EnvelopeId =
+                        envelope.Id,
+
+                    EventType =
+                        EnvelopeEventType.DraftDeleted,
+
+                    UserId =
+                        _currentUser.UserId,
+
+                    RecipientId =
+                        null,
+
+                    OccurredAt =
+                        now
+                },
+                cancellationToken);
+
+            await _unitOfWork.SaveChangesAsync(
+                cancellationToken);
 
         }
 
@@ -337,6 +442,20 @@ namespace LV.SignFlow.Application.Envelopes
             if (envelope is null || envelope.IsDeleted || envelope.OrganizationId != _currentUser.OrganizationId)
             {
                 throw new ArgumentException("Envelope was not found.");
+            }
+            if (
+    envelope.CreatedByUserId !=
+        _currentUser.UserId)
+            {
+                throw new UnauthorizedAccessException(
+                    "Only the sender can edit this envelope.");
+            }
+
+            if (!EnvelopeStatusTransitionPolicy.CanEdit(
+                    envelope.Status))
+            {
+                throw new InvalidOperationException(
+                    "Only draft envelopes can be updated.");
             }
             if (request.ReminderIntervalDays.HasValue &&request.ReminderIntervalDays.Value <= 0)
             {
@@ -1996,12 +2115,9 @@ namespace LV.SignFlow.Application.Envelopes
                 _envelopeRecipient.Update(recipient);
             }
 
-            envelope.Status =
-              EnvelopeStatus.Sent;
-
-            envelope.SentAt = now;
-
-            envelope.UpdatedAt = now;
+            envelope.TransitionTo(
+          EnvelopeStatus.Sent,
+          now);
 
             envelope.CurrentRoutingOrder = null;
 
@@ -2878,7 +2994,158 @@ namespace LV.SignFlow.Application.Envelopes
                 }
             }
         }
+        private async Task<Envelope> GetAccessibleEnvelopeAsync(
+    Guid envelopeId,
+    CancellationToken cancellationToken)
+        {
+            EnsureAuthenticated();
 
+            var envelope =
+                await _envelopeRepository.GetByIdAsync(
+                    envelopeId,
+                    cancellationToken);
+
+            if (envelope is null ||
+                envelope.IsDeleted ||
+                envelope.OrganizationId !=
+                    _currentUser.OrganizationId)
+            {
+                throw new KeyNotFoundException(
+                    "Envelope was not found.");
+            }
+
+            if (envelope.CreatedByUserId ==
+                _currentUser.UserId)
+            {
+                return envelope;
+            }
+
+            var recipients =
+                await _envelopeRecipient.FindAsync(
+                    x =>
+                        x.EnvelopeId == envelopeId &&
+                        x.UserId == _currentUser.UserId,
+                    cancellationToken);
+
+            if (recipients.Count == 0)
+            {
+                throw new UnauthorizedAccessException(
+                    "You do not have access to this envelope.");
+            }
+
+            return envelope;
+        }
+        public async Task<FileDownloadResult>
+    DownloadFinalDocumentAsync(
+        Guid envelopeId,
+        Guid documentId,
+        CancellationToken cancellationToken = default)
+        {
+            var envelope =
+                await GetAccessibleEnvelopeAsync(
+                    envelopeId,
+                    cancellationToken);
+
+            if (envelope.Status !=
+                EnvelopeStatus.Completed)
+            {
+                throw new InvalidOperationException(
+                    "The final document is only available after the envelope is completed.");
+            }
+
+            var document =
+                await _envelopeDocument.GetByIdAsync(
+                    documentId,
+                    cancellationToken);
+
+            if (document is null ||
+                document.EnvelopeId != envelopeId)
+            {
+                throw new KeyNotFoundException(
+                    "Document was not found.");
+            }
+
+            if (string.IsNullOrWhiteSpace(
+                    document.FinalBlobPath))
+            {
+                throw new KeyNotFoundException(
+                    "The final signed document is not available.");
+            }
+
+            var stream =
+                await _fileStorage.OpenReadAsync(
+                    document.FinalBlobPath,
+                    cancellationToken);
+
+            if (stream is null)
+            {
+                throw new FileNotFoundException(
+                    "The final signed document file could not be found.");
+            }
+
+            var originalName =
+                Path.GetFileNameWithoutExtension(
+                    document.OriginalFileName);
+
+            return new FileDownloadResult
+            {
+                Content =
+                    stream,
+
+                ContentType =
+                    "application/pdf",
+
+                FileName =
+                    $"{originalName}-signed.pdf"
+            };
+        }
+        public async Task<FileDownloadResult>
+    DownloadCompletionCertificateAsync(
+        Guid envelopeId,
+        CancellationToken cancellationToken = default)
+        {
+            var envelope =
+                await GetAccessibleEnvelopeAsync(
+                    envelopeId,
+                    cancellationToken);
+
+            if (envelope.Status !=
+                EnvelopeStatus.Completed)
+            {
+                throw new InvalidOperationException(
+                    "The completion certificate is only available after the envelope is completed.");
+            }
+
+            if (string.IsNullOrWhiteSpace(
+                    envelope.CertificateBlobPath))
+            {
+                throw new KeyNotFoundException(
+                    "The completion certificate is not available.");
+            }
+
+            var stream =
+                await _fileStorage.OpenReadAsync(
+                    envelope.CertificateBlobPath,
+                    cancellationToken);
+
+            if (stream is null)
+            {
+                throw new FileNotFoundException(
+                    "The completion certificate file could not be found.");
+            }
+
+            return new FileDownloadResult
+            {
+                Content =
+                    stream,
+
+                ContentType =
+                    "application/pdf",
+
+                FileName =
+                    $"LV-Sign-Certificate-{envelope.Id}.pdf"
+            };
+        }
         public async Task FinishRecipientAsync(Guid envelopeId, Guid recipientId, CancellationToken cancellationToken = default)
         {
             EnsureAuthenticated();
@@ -2976,22 +3243,46 @@ namespace LV.SignFlow.Application.Envelopes
                 recipient.CompletedAt = now;
 
                 _envelopeRecipient.Update(recipient);
-            if (envelope.Status == EnvelopeStatus.Sent)
+            if (
+    envelope.Status ==
+    EnvelopeStatus.Sent)
             {
-                envelope.Status = EnvelopeStatus.InProgress;
+                var previousStatus =
+                    envelope.Status;
 
-                await _statusHistoryRepository.AddAsync(
-                    new StatusHistory
-                    {
-                        Id = Guid.NewGuid(),
-                        EnvelopeId = envelope.Id,
-                        PreviousStatus = EnvelopeStatus.Sent,
-                        NewStatus = EnvelopeStatus.InProgress,
-                        ChangedByUserId = _currentUser.UserId,
-                        Reason = "Recipient completed an action.",
-                        ChangedAt = now
-                    },
-                    cancellationToken);
+                var changed =
+                    envelope.TransitionTo(
+                        EnvelopeStatus.InProgress,
+                        now);
+
+                if (changed)
+                {
+                    await _statusHistoryRepository.AddAsync(
+                        new StatusHistory
+                        {
+                            Id =
+                                Guid.NewGuid(),
+
+                            EnvelopeId =
+                                envelope.Id,
+
+                            PreviousStatus =
+                                previousStatus,
+
+                            NewStatus =
+                                EnvelopeStatus.InProgress,
+
+                            ChangedByUserId =
+                                _currentUser.UserId,
+
+                            Reason =
+                                "Recipient completed an action.",
+
+                            ChangedAt =
+                                now
+                        },
+                        cancellationToken);
+                }
             }
 
             var eventType =
@@ -3038,119 +3329,186 @@ namespace LV.SignFlow.Application.Envelopes
 
                     currentRecipient.CompletedAt = now;
                 }
-                await ActivateNextRoutingStepAsync(
-                  envelope,
-                  routingRecipients,
-                  cancellationToken,
-                  existingValues.ToList());
+            await ActivateNextRoutingStepAsync(
+ envelope,
+ routingRecipients,
+ cancellationToken,
+ existingValues.ToList());
 
-                await TryCompleteEnvelopeAsync(
-                  envelope,
-                  routingRecipients,
-                  now,
-                  cancellationToken);
+            await TryCompleteEnvelopeAsync(
+                envelope,
+                routingRecipients,
+                now,
+                cancellationToken);
 
                 envelope.UpdatedAt = now;
 
                 await _unitOfWork.SaveChangesAsync(
-                  cancellationToken);
-            
-            
+                    cancellationToken);
+
+
+        }
+
+        private async Task EnsureEnvelopeFinalizationPendingAsync(
+    Guid envelopeId,
+    DateTimeOffset now,
+    CancellationToken cancellationToken)
+        {
+            /*
+             * Hər envelope üçün yalnız bir finalization row.
+             *
+             * DB-də də EnvelopeId üzərində UNIQUE index var.
+             */
+            var existing =
+                await _envelopeFinalizationRepository.FindAsync(
+                    x => x.EnvelopeId == envelopeId,
+                    cancellationToken);
+
+            if (existing.Any())
+            {
+                return;
+            }
+
+            var finalization =
+                new EnvelopeFinalization
+                {
+                    Id =
+                        Guid.NewGuid(),
+
+                    EnvelopeId =
+                        envelopeId,
+
+                    Status =
+                        EnvelopeFinalizationStatus.Pending,
+
+                    AttemptCount =
+                        0,
+
+                    LastError =
+                        null,
+
+                    NextAttemptAt =
+                        null,
+
+                    LeaseId =
+                        null,
+
+                    LeaseUntil =
+                        null,
+
+                    CreatedAt =
+                        now,
+
+                    UpdatedAt =
+                        now,
+
+                    CompletedAt =
+                        null
+                };
+
+            await _envelopeFinalizationRepository.AddAsync(
+                finalization,
+                cancellationToken);
+
         }
 
         private async Task TryCompleteEnvelopeAsync(
-          Envelope envelope,
-          IReadOnlyList<Recipients> recipients,
-          DateTimeOffset now,
-          CancellationToken cancellationToken)
+    Envelope envelope,
+    IReadOnlyList<Recipients> recipients,
+    DateTimeOffset now,
+    CancellationToken cancellationToken)
         {
             var hasIncompleteRequiredRecipient =
-              recipients.Any(x =>
-                x.IsRequired &&
-                x.Status != RecipientStatus.Completed &&
-                x.Status != RecipientStatus.Skipped);
+                recipients.Any(x =>
+                    x.IsRequired &&
+                    x.Status != RecipientStatus.Completed &&
+                    x.Status != RecipientStatus.Skipped);
 
             if (hasIncompleteRequiredRecipient)
+            {
                 return;
+            }
 
-            // Required recipient-lər bitibsə,
-            // optional recipient-lər artıq flow-u saxlamamalıdır.
-            foreach (var recipient in recipients.Where(x =>
-              !x.IsRequired &&
-              (
-                x.Status == RecipientStatus.Pending ||
-                x.Status == RecipientStatus.Active ||
-                x.Status == RecipientStatus.Viewed
-              )))
+            foreach (
+                var recipient in
+                recipients.Where(x =>
+                    !x.IsRequired &&
+                    IsOpenRecipientStatus(
+                        x.Status)))
             {
                 recipient.Status =
-                  RecipientStatus.Skipped;
+                    RecipientStatus.Skipped;
 
                 _envelopeRecipient.Update(
-                  recipient);
+                    recipient);
             }
 
             var previousStatus =
-              envelope.Status;
+                envelope.Status;
 
-            envelope.Status =
-              EnvelopeStatus.Completed;
+            var changed =
+                envelope.TransitionTo(
+                    EnvelopeStatus.Completed,
+                    now);
 
-            envelope.CompletedAt =
-              now;
-
-            envelope.CurrentRoutingOrder =
-              null;
-
-            envelope.UpdatedAt =
-              now;
+            if (!changed)
+            {
+                return;
+            }
 
             await _statusHistoryRepository.AddAsync(
-              new StatusHistory
-              {
-                  Id = Guid.NewGuid(),
+                new StatusHistory
+                {
+                    Id =
+                        Guid.NewGuid(),
 
-                  EnvelopeId =
-                  envelope.Id,
+                    EnvelopeId =
+                        envelope.Id,
 
-                  PreviousStatus =
-                  previousStatus,
+                    PreviousStatus =
+                        previousStatus,
 
-                  NewStatus =
-                  EnvelopeStatus.Completed,
+                    NewStatus =
+                        EnvelopeStatus.Completed,
 
-                  ChangedByUserId =
-                  _currentUser.UserId,
+                    ChangedByUserId =
+                        _currentUser.UserId,
 
-                  Reason =
-                  "All required recipients completed their actions.",
+                    Reason =
+                        "All required recipients completed their actions.",
 
-                  ChangedAt =
-                  now
-              },
-              cancellationToken);
+                    ChangedAt =
+                        now
+                },
+                cancellationToken);
 
             await _eventRepository.AddAsync(
-              new Events
-              {
-                  Id = Guid.NewGuid(),
+                new Events
+                {
+                    Id =
+                        Guid.NewGuid(),
 
-                  EnvelopeId =
-                  envelope.Id,
+                    EnvelopeId =
+                        envelope.Id,
 
-                  EventType =
-                  EnvelopeEventType.Completed,
+                    EventType =
+                        EnvelopeEventType.Completed,
 
-                  UserId =
-                  _currentUser.UserId,
+                    UserId =
+                        _currentUser.UserId,
 
-                  RecipientId =
-                  null,
+                    RecipientId =
+                        null,
 
-                  OccurredAt =
-                  now
-              },
-              cancellationToken);
+                    OccurredAt =
+                        now
+                },
+                cancellationToken);
+
+            await EnsureEnvelopeFinalizationPendingAsync(
+                envelope.Id,
+                now,
+                cancellationToken);
         }
 
         private EnvelopeFieldValue? CreateFieldValue(
@@ -3475,94 +3833,114 @@ namespace LV.SignFlow.Application.Envelopes
                   "Only an active recipient can decline the envelope.");
             }
 
-            var now = DateTimeOffset.UtcNow;
+            var now =
+     DateTimeOffset.UtcNow;
+
+            EnsureNotPastExpiry(
+                envelope,
+                now);
 
             var previousStatus =
-              envelope.Status;
+                envelope.Status;
 
             recipient.Status =
-              RecipientStatus.Declined;
+                RecipientStatus.Declined;
 
-            recipient.DeclinedAt = now;
+            recipient.DeclinedAt =
+                now;
 
-            recipient.DeclineReason = reason;
+            recipient.DeclineReason =
+                reason;
 
-            _envelopeRecipient.Update(recipient);
+            _envelopeRecipient.Update(
+                recipient);
 
             var recipients =
-              await _envelopeRecipient.FindAsync(
-                x => x.EnvelopeId == envelopeId,
-                cancellationToken);
+                await _envelopeRecipient.FindAsync(
+                    x =>
+                        x.EnvelopeId ==
+                        envelopeId,
+                    cancellationToken);
 
-            foreach (var otherRecipient in recipients.Where(x =>
-              x.Id != recipient.Id &&
-              (
-                x.Status == RecipientStatus.Pending ||
-                x.Status == RecipientStatus.Active ||
-                x.Status == RecipientStatus.Viewed ||
-                x.Status == RecipientStatus.Created
-              )))
+            foreach (
+                var otherRecipient in
+                recipients.Where(x =>
+                    x.Id != recipient.Id &&
+                    IsOpenRecipientStatus(
+                        x.Status)))
             {
                 otherRecipient.Status =
-                  RecipientStatus.Canceled;
+                    RecipientStatus.Canceled;
 
-                otherRecipient.CanceledAt = now;
+                otherRecipient.CanceledAt =
+                    now;
 
                 _envelopeRecipient.Update(
-                  otherRecipient);
+                    otherRecipient);
             }
 
-            envelope.Status =
-              EnvelopeStatus.Declined;
-
-            envelope.CurrentRoutingOrder = null;
-
-            envelope.UpdatedAt = now;
+            envelope.TransitionTo(
+                EnvelopeStatus.Declined,
+                now);
 
             await _statusHistoryRepository.AddAsync(
-              new StatusHistory
-              {
-                  Id = Guid.NewGuid(),
+                new StatusHistory
+                {
+                    Id =
+                        Guid.NewGuid(),
 
-                  EnvelopeId = envelope.Id,
+                    EnvelopeId =
+                        envelope.Id,
 
-                  PreviousStatus =
-                  previousStatus,
+                    PreviousStatus =
+                        previousStatus,
 
-                  NewStatus =
-                  EnvelopeStatus.Declined,
+                    NewStatus =
+                        EnvelopeStatus.Declined,
 
-                  ChangedByUserId =
-                  _currentUser.UserId,
+                    ChangedByUserId =
+                        _currentUser.UserId,
 
-                  Reason = reason,
+                    Reason =
+                        reason,
 
-                  ChangedAt = now
-              },
-              cancellationToken);
+                    ChangedAt =
+                        now
+                },
+                cancellationToken);
 
             await _eventRepository.AddAsync(
-              new Events
-              {
-                  Id = Guid.NewGuid(),
+                new Events
+                {
+                    Id =
+                        Guid.NewGuid(),
 
-                  EnvelopeId = envelope.Id,
+                    EnvelopeId =
+                        envelope.Id,
 
-                  RecipientId =
-                  recipient.Id,
+                    RecipientId =
+                        recipient.Id,
 
-                  UserId =
-                  _currentUser.UserId,
+                    UserId =
+                        _currentUser.UserId,
 
-                  EventType =
-                  EnvelopeEventType.Declined,
+                    EventType =
+                        EnvelopeEventType.Declined,
 
-                  OccurredAt = now
-              },
-              cancellationToken);
+                    OccurredAt =
+                        now,
+
+                    MetadataJson =
+                        JsonSerializer.Serialize(
+                            new
+                            {
+                                reason
+                            })
+                },
+                cancellationToken);
 
             await _unitOfWork.SaveChangesAsync(
-              cancellationToken);
+                cancellationToken);
         }
 
         public async Task VoidAsync(Guid envelopeId, VoidAndDeclineEnvelopeRequest request, CancellationToken cancellationToken =
@@ -3605,85 +3983,101 @@ namespace LV.SignFlow.Application.Envelopes
                   "Only an active sent envelope can be voided.");
             }
 
-            var now = DateTimeOffset.UtcNow;
+            var now =
+    DateTimeOffset.UtcNow;
+
+            EnsureNotPastExpiry(
+                envelope,
+                now);
 
             var previousStatus =
-              envelope.Status;
+                envelope.Status;
 
             var recipients =
-              await _envelopeRecipient.FindAsync(
-                x => x.EnvelopeId == envelopeId,
-                cancellationToken);
+                await _envelopeRecipient.FindAsync(
+                    x =>
+                        x.EnvelopeId ==
+                        envelopeId,
+                    cancellationToken);
 
-            foreach (var recipient in recipients.Where(x =>
-              x.Status == RecipientStatus.Pending ||
-              x.Status == RecipientStatus.Active ||
-              x.Status == RecipientStatus.Viewed ||
-              x.Status == RecipientStatus.Created))
+            foreach (
+                var recipient in
+                recipients.Where(x =>
+                    IsOpenRecipientStatus(
+                        x.Status)))
             {
                 recipient.Status =
-                  RecipientStatus.Canceled;
+                    RecipientStatus.Canceled;
 
-                recipient.CanceledAt = now;
+                recipient.CanceledAt =
+                    now;
 
                 _envelopeRecipient.Update(
-                  recipient);
+                    recipient);
             }
 
-            envelope.Status =
-              EnvelopeStatus.Voided;
-
-            envelope.VoidedAt = now;
-
-            envelope.CurrentRoutingOrder = null;
-
-            envelope.UpdatedAt = now;
+            envelope.TransitionTo(
+                EnvelopeStatus.Voided,
+                now);
 
             await _statusHistoryRepository.AddAsync(
-              new StatusHistory
-              {
-                  Id = Guid.NewGuid(),
+                new StatusHistory
+                {
+                    Id =
+                        Guid.NewGuid(),
 
-                  EnvelopeId =
-                  envelope.Id,
+                    EnvelopeId =
+                        envelope.Id,
 
-                  PreviousStatus =
-                  previousStatus,
+                    PreviousStatus =
+                        previousStatus,
 
-                  NewStatus =
-                  EnvelopeStatus.Voided,
+                    NewStatus =
+                        EnvelopeStatus.Voided,
 
-                  ChangedByUserId =
-                  _currentUser.UserId,
+                    ChangedByUserId =
+                        _currentUser.UserId,
 
-                  Reason = reason,
+                    Reason =
+                        reason,
 
-                  ChangedAt = now
-              },
-              cancellationToken);
+                    ChangedAt =
+                        now
+                },
+                cancellationToken);
 
             await _eventRepository.AddAsync(
-              new Events
-              {
-                  Id = Guid.NewGuid(),
+                new Events
+                {
+                    Id =
+                        Guid.NewGuid(),
 
-                  EnvelopeId =
-                  envelope.Id,
+                    EnvelopeId =
+                        envelope.Id,
 
-                  RecipientId = null,
+                    RecipientId =
+                        null,
 
-                  UserId =
-                  _currentUser.UserId,
+                    UserId =
+                        _currentUser.UserId,
 
-                  EventType =
-                  EnvelopeEventType.Voided,
+                    EventType =
+                        EnvelopeEventType.Voided,
 
-                  OccurredAt = now
-              },
-              cancellationToken);
+                    OccurredAt =
+                        now,
+
+                    MetadataJson =
+                        JsonSerializer.Serialize(
+                            new
+                            {
+                                reason
+                            })
+                },
+                cancellationToken);
 
             await _unitOfWork.SaveChangesAsync(
-              cancellationToken);
+                cancellationToken);
         }
 
         public async Task UpdateEnvelopeDraftAsync(Guid envelopeId, EnvelopeDraftRequest request, CancellationToken cancellationToken =
@@ -4609,6 +5003,469 @@ default)
 
                 CompletedAt =
                     updatedRecipient.CompletedAt
+            };
+        }
+
+        private async Task<Envelope> GetAccessibleEnvelopeForArtifactsAsync(
+    Guid envelopeId,
+    CancellationToken cancellationToken)
+        {
+            if (envelopeId == Guid.Empty)
+            {
+                throw new ArgumentException(
+                    "Envelope id is required.",
+                    nameof(envelopeId));
+            }
+
+            var envelope =
+                await _envelopeRepository.GetByIdAsync(
+                    envelopeId,
+                    cancellationToken);
+
+            if (
+                envelope is null ||
+                envelope.IsDeleted ||
+                envelope.OrganizationId !=
+                    _currentUser.OrganizationId)
+            {
+                throw new KeyNotFoundException(
+                    "Envelope was not found.");
+            }
+
+            return envelope;
+        }
+
+        public async Task<EnvelopeDownloadsDto> GetDownloadsAsync(
+    Guid envelopeId,
+    CancellationToken cancellationToken = default)
+        {
+            var envelope =
+                await GetAccessibleEnvelopeForArtifactsAsync(
+                    envelopeId,
+                    cancellationToken);
+
+            var documents =
+                (
+                    await _envelopeDocument.FindAsync(
+                        x =>
+                            x.EnvelopeId == envelopeId,
+                        cancellationToken)
+                )
+                .OrderBy(x => x.Id)
+                .ToList();
+
+            var finalizations =
+                await _envelopeFinalizationRepository.FindAsync(
+                    x =>
+                        x.EnvelopeId == envelopeId,
+                    cancellationToken);
+
+            var finalization =
+                finalizations.FirstOrDefault();
+
+            var documentDtos =
+                documents
+                    .Select(x =>
+                        new EnvelopeDownloadDocumentDto
+                        {
+                            DocumentId =
+                                x.Id,
+
+                            FileName =
+                                x.OriginalFileName,
+
+                            IsReady =
+                                !string.IsNullOrWhiteSpace(
+                                    x.FinalBlobPath) &&
+                                !string.IsNullOrWhiteSpace(
+                                    x.FinalHash) &&
+                                x.FinalizedAt.HasValue
+                        })
+                    .ToList();
+
+            var certificateReady =
+                !string.IsNullOrWhiteSpace(
+                    envelope.CertificateBlobPath) &&
+                !string.IsNullOrWhiteSpace(
+                    envelope.CertificateHash) &&
+                envelope.CertificateGeneratedAt.HasValue;
+
+            var allDocumentsReady =
+                documentDtos.Count > 0 &&
+                documentDtos.All(x => x.IsReady);
+
+            return new EnvelopeDownloadsDto
+            {
+                EnvelopeId =
+                    envelope.Id,
+
+                FinalizationStatus =
+                    finalization?.Status.ToString()
+                    ?? "None",
+
+                IsReady =
+                    envelope.Status ==
+                        EnvelopeStatus.Completed &&
+                    allDocumentsReady &&
+                    certificateReady,
+
+                CertificateReady =
+                    certificateReady,
+
+                Documents =
+                    documentDtos
+            };
+        }
+
+        public async Task<EnvelopeArtifactFile> OpenFinalDocumentAsync(
+    Guid envelopeId,
+    Guid documentId,
+    CancellationToken cancellationToken = default)
+        {
+            var envelope =
+                await GetAccessibleEnvelopeForArtifactsAsync(
+                    envelopeId,
+                    cancellationToken);
+
+            if (envelope.Status !=
+                EnvelopeStatus.Completed)
+            {
+                throw new InvalidOperationException(
+                    "Signed documents are only available for completed agreements.");
+            }
+
+            var document =
+                await _envelopeDocument.GetByIdAsync(
+                    documentId,
+                    cancellationToken);
+
+            if (
+                document is null ||
+                document.EnvelopeId != envelopeId)
+            {
+                throw new KeyNotFoundException(
+                    "Document was not found.");
+            }
+
+            if (
+                string.IsNullOrWhiteSpace(
+                    document.FinalBlobPath) ||
+                string.IsNullOrWhiteSpace(
+                    document.FinalHash) ||
+                !document.FinalizedAt.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "The signed document is still being prepared.");
+            }
+
+            var stream =
+                await _fileStorage.OpenReadAsync(
+                    document.FinalBlobPath,
+                    cancellationToken);
+
+            var originalName =
+                Path.GetFileName(
+                    document.OriginalFileName);
+
+            var baseName =
+                Path.GetFileNameWithoutExtension(
+                    originalName);
+
+            var downloadName =
+                string.IsNullOrWhiteSpace(baseName)
+                    ? $"signed-document-{document.Id:N}.pdf"
+                    : $"{baseName}-signed.pdf";
+
+            return new EnvelopeArtifactFile(
+                stream,
+                "application/pdf",
+                downloadName);
+        }
+
+        public async Task<EnvelopeArtifactFile> OpenCertificateAsync(
+    Guid envelopeId,
+    CancellationToken cancellationToken = default)
+        {
+            var envelope =
+                await GetAccessibleEnvelopeForArtifactsAsync(
+                    envelopeId,
+                    cancellationToken);
+
+            if (envelope.Status !=
+                EnvelopeStatus.Completed)
+            {
+                throw new InvalidOperationException(
+                    "The completion certificate is only available for completed agreements.");
+            }
+
+            if (
+                string.IsNullOrWhiteSpace(
+                    envelope.CertificateBlobPath) ||
+                string.IsNullOrWhiteSpace(
+                    envelope.CertificateHash) ||
+                !envelope.CertificateGeneratedAt.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "The completion certificate is still being prepared.");
+            }
+
+            var stream =
+                await _fileStorage.OpenReadAsync(
+                    envelope.CertificateBlobPath,
+                    cancellationToken);
+
+            return new EnvelopeArtifactFile(
+                stream,
+                "application/pdf",
+                $"completion-certificate-{envelope.Id:N}.pdf");
+        }
+
+        private static bool IsOpenRecipientStatus(
+    RecipientStatus status)
+        {
+            return status is
+                RecipientStatus.Created or
+                RecipientStatus.Pending or
+                RecipientStatus.Active or
+                RecipientStatus.Viewed or
+                RecipientStatus.WaitingForCondition or
+                RecipientStatus.Sent;
+        }
+        private static void EnsureNotPastExpiry(
+    Envelope envelope,
+    DateTimeOffset now)
+        {
+            if (
+                envelope.ExpiresAt.HasValue &&
+                envelope.ExpiresAt.Value <= now)
+            {
+                throw new InvalidOperationException(
+                    "This envelope has expired.");
+            }
+        }
+
+        public async Task<int> ExpireDueEnvelopesAsync(
+    DateTimeOffset now,
+    CancellationToken cancellationToken = default)
+        {
+            var envelopes =
+                await _envelopeRepository.FindAsync(
+                    x =>
+                        !x.IsDeleted &&
+                        x.ExpiresAt.HasValue &&
+                        x.ExpiresAt.Value <= now &&
+                        (
+                            x.Status ==
+                                EnvelopeStatus.Sent ||
+                            x.Status ==
+                                EnvelopeStatus.InProgress
+                        ),
+                    cancellationToken);
+
+            var expiredCount =
+                0;
+
+            foreach (var envelope in envelopes)
+            {
+                if (!EnvelopeStatusTransitionPolicy.CanExpire(
+                        envelope.Status))
+                {
+                    continue;
+                }
+
+                var previousStatus =
+                    envelope.Status;
+
+                var recipients =
+                    await _envelopeRecipient.FindAsync(
+                        x =>
+                            x.EnvelopeId ==
+                            envelope.Id,
+                        cancellationToken);
+
+                foreach (
+                    var recipient in
+                    recipients.Where(x =>
+                        IsOpenRecipientStatus(
+                            x.Status)))
+                {
+                    recipient.Status =
+                        RecipientStatus.Canceled;
+
+                    recipient.CanceledAt =
+                        now;
+
+                    _envelopeRecipient.Update(
+                        recipient);
+                }
+
+                envelope.TransitionTo(
+                    EnvelopeStatus.Expired,
+                    now);
+
+                _envelopeRepository.Update(
+                    envelope);
+
+                await _statusHistoryRepository.AddAsync(
+                    new StatusHistory
+                    {
+                        Id =
+                            Guid.NewGuid(),
+
+                        EnvelopeId =
+                            envelope.Id,
+
+                        PreviousStatus =
+                            previousStatus,
+
+                        NewStatus =
+                            EnvelopeStatus.Expired,
+
+                        ChangedByUserId =
+                            null,
+
+                        Reason =
+                            "Envelope expiration date reached.",
+
+                        ChangedAt =
+                            now
+                    },
+                    cancellationToken);
+
+                await _eventRepository.AddAsync(
+                    new Events
+                    {
+                        Id =
+                            Guid.NewGuid(),
+
+                        EnvelopeId =
+                            envelope.Id,
+
+                        EventType =
+                            EnvelopeEventType.Expired,
+
+                        UserId =
+                            null,
+
+                        RecipientId =
+                            null,
+
+                        OccurredAt =
+                            now
+                    },
+                    cancellationToken);
+
+                expiredCount++;
+            }
+
+            if (expiredCount > 0)
+            {
+                await _unitOfWork.SaveChangesAsync(
+                    cancellationToken);
+            }
+
+            return expiredCount;
+        }
+
+        public async Task<
+    IReadOnlyList<EnvelopeHistoryItemDto>>
+    GetHistoryAsync(
+        Guid envelopeId,
+        CancellationToken cancellationToken = default)
+        {
+            EnsureAuthenticated();
+
+            var envelope =
+                await _envelopeRepository.GetByIdAsync(
+                    envelopeId,
+                    cancellationToken);
+
+            if (
+                envelope is null ||
+                envelope.IsDeleted ||
+                envelope.OrganizationId !=
+                    _currentUser.OrganizationId)
+            {
+                throw new KeyNotFoundException(
+                    "Envelope was not found.");
+            }
+
+            var events =
+                await _eventRepository.FindAsync(
+                    x =>
+                        x.EnvelopeId ==
+                        envelopeId,
+                    cancellationToken);
+
+            return events
+                .OrderByDescending(
+                    x => x.OccurredAt)
+                .Select(x =>
+                    new EnvelopeHistoryItemDto
+                    {
+                        Id =
+                            x.Id,
+
+                        EventType =
+                            x.EventType.ToString(),
+
+                        Action =
+                            GetHistoryAction(x),
+
+                        At =
+                            x.OccurredAt
+                    })
+                .ToList();
+        }
+        private static string GetHistoryAction(
+    Events item)
+        {
+            return item.EventType switch
+            {
+                EnvelopeEventType.Created =>
+                    "Envelope created",
+
+                EnvelopeEventType.DocumentUploaded =>
+                    "Document uploaded",
+
+                EnvelopeEventType.RecipientAdded =>
+                    "Recipient added",
+
+                EnvelopeEventType.Sent =>
+                    "Envelope sent",
+
+                EnvelopeEventType.Viewed =>
+                    "Envelope viewed",
+
+                EnvelopeEventType.Signed =>
+                    "Document signed",
+
+                EnvelopeEventType.Approved =>
+                    "Document approved",
+
+                EnvelopeEventType.Declined =>
+                    "Envelope declined",
+
+                EnvelopeEventType.ReminderSent =>
+                    "Reminder sent",
+
+                EnvelopeEventType.Completed =>
+                    "Envelope completed",
+
+                EnvelopeEventType.Voided =>
+                    "Envelope voided",
+
+                EnvelopeEventType.Downloaded =>
+                    "Document downloaded",
+
+                EnvelopeEventType.Expired =>
+                    "Envelope expired",
+
+                EnvelopeEventType.DraftDeleted =>
+                    "Draft deleted",
+
+                _ =>
+                    item.EventType.ToString()
             };
         }
     }

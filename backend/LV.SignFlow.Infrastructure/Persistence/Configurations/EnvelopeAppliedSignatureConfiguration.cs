@@ -31,7 +31,17 @@ namespace LV.SignFlow.Infrastructure.Persistence.Configurations
            });
 
             builder.HasKey(x => x.Id);
+            builder.Property(x => x.TypedTextSnapshot)
+    .HasMaxLength(250);
 
+            builder.Property(x => x.FontKeySnapshot)
+                .HasMaxLength(50);
+
+            builder.Property(x => x.AppliedContentType)
+                .HasMaxLength(100);
+
+            builder.Property(x => x.AppliedHash)
+                .HasMaxLength(128);
             builder.Property(x => x.AppliedBlobPath)
                 .IsRequired()
                 .HasMaxLength(1000);

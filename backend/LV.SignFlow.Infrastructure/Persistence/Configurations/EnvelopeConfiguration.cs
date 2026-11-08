@@ -41,7 +41,13 @@ namespace LV.SignFlow.Infrastructure.Persistence.Configurations
             builder.HasIndex(x => x.OrganizationId);
             builder.HasIndex(x => x.CreatedByUserId);
 
-          
+            builder.Property(x => x.CertificateBlobPath)
+      .HasMaxLength(1000);
+
+            builder.Property(x => x.CertificateHash)
+                .HasMaxLength(128);
+
+            builder.Property(x => x.CertificateGeneratedAt);
             builder.HasIndex(x => new
             {
                 x.OrganizationId,

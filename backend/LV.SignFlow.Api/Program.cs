@@ -1,16 +1,18 @@
 
 using LV.SignFlow.Api.Authentification;
+using LV.SignFlow.Api.BackgroundServices;
 using LV.SignFlow.Application.Common.Interfaces;
 using LV.SignFlow.Application.Envelopes;
 using LV.SignFlow.Application.Signing;
 using LV.SignFlow.Application.Templates;
 using LV.SignFlow.Infrastructure;
+using LV.SignFlow.Infrastructure.Pdf;
 using LV.SignFlow.Infrastructure.Persistence;
 using LV.SignFlow.Infrastructure.Persistence.Seed;
 using LV.SignFlow.Infrastructure.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
-
+PdfFontBootstrapper.Initialize();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -41,10 +43,16 @@ if (builder.Environment.IsDevelopment())
 {
     builder.Services.AddScoped<ICurrentUser, DevelopmentCurrentUser>();
 }
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
+builder.Services.Configure<
+    EnvelopeFinalizationWorkerOptions>(
+        builder.Configuration.GetSection(
+            EnvelopeFinalizationWorkerOptions.SectionName));
 
+builder.Services.AddHostedService<
+    EnvelopeFinalizationBackgroundService>();
+builder.Services.AddHostedService<
+    EnvelopeExpirationBackgroundService>();
 
 var app = builder.Build();
 
