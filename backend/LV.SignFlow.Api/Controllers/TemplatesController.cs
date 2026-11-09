@@ -1009,5 +1009,66 @@ namespace LV.SignFlow.Api.Controllers
                 return NotFound();
             }
         }
+
+        [HttpPost("{templateId:guid}/publish")]
+        public async Task<ActionResult<TemplateDetailsDto>>
+    Publish(
+        Guid templateId,
+        CancellationToken cancellationToken)
+        {
+            try
+            {
+                var result =
+                    await templateService.PublishAsync(
+                        templateId,
+                        cancellationToken);
+
+                return Ok(result);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Conflict(ex.Message);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
+            }
+        }
+        [HttpPost("{templateId:guid}/versions")]
+        public async Task<ActionResult<TemplateDetailsDto>>
+    CreateNewVersion(
+        Guid templateId,
+        CancellationToken cancellationToken)
+        {
+            try
+            {
+                var result =
+                    await templateService.CreateNewVersionAsync(
+                        templateId,
+                        cancellationToken);
+
+                return Ok(result);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Conflict(ex.Message);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Forbid();
+            }
+        }
     }
 }

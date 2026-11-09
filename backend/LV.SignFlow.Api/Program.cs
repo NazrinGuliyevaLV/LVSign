@@ -3,6 +3,7 @@ using LV.SignFlow.Api.Authentification;
 using LV.SignFlow.Api.BackgroundServices;
 using LV.SignFlow.Application.Common.Interfaces;
 using LV.SignFlow.Application.Envelopes;
+using LV.SignFlow.Application.Notifications;
 using LV.SignFlow.Application.Signing;
 using LV.SignFlow.Application.Templates;
 using LV.SignFlow.Infrastructure;
@@ -22,6 +23,11 @@ builder.Services.AddScoped<ITemplateService, TemplateService>();
 builder.Services.AddScoped<IEnvelopeService, EnvelopeService>();
 builder.Services.AddScoped<ISigningService, SigningService>();
 builder.Services.AddScoped<IFileStorage,LocalFileStorage>();
+builder.Services.AddScoped<INotificationService,NotificationService>();
+builder.Services.AddScoped<IEnvelopeNotificationService,EnvelopeNotificationService>();
+builder.Services.AddScoped<IEmailNotificationProcessor,EmailNotificationProcessor>();
+builder.Services.AddScoped<ISigningReminderService,SigningReminderService>();
+builder.Services.AddScoped<INotificationPreferenceService,NotificationPreferenceService>();
 
 
 const string FrontentCorsPolicy = "FrontendCors";
@@ -53,6 +59,10 @@ builder.Services.AddHostedService<
     EnvelopeFinalizationBackgroundService>();
 builder.Services.AddHostedService<
     EnvelopeExpirationBackgroundService>();
+builder.Services.AddHostedService<
+    EmailNotificationBackgroundService>();
+builder.Services.AddHostedService<
+    SigningReminderBackgroundService>();
 
 var app = builder.Build();
 

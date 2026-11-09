@@ -2,6 +2,7 @@
 using LV.SignFlow.Application.Common.Models;
 using LV.SignFlow.Application.Envelopes.Dtos;
 using LV.SignFlow.Application.Envelopes.Requests;
+using LV.SignFlow.Application.Notifications;
 using LV.SignFlow.Application.Signing.Dtos;
 using LV.SignFlow.Application.Templates;
 using LV.SignFlow.Domain.Entities.Envelopes;
@@ -53,11 +54,10 @@ namespace LV.SignFlow.Application.Envelopes
         public IRepository<EnvelopeFieldValue> _envelopeFieldValue;
         public IRepository<EnvelopeAppliedSignature> _envelopeAppliedSignature;
         private readonly IRepository<EnvelopeFinalization> _envelopeFinalizationRepository;
-        private readonly IFinalPdfRenderer _finalPdfRenderer;
-        private readonly ICompletionCertificateGenerator _completionCertificateGenerator;
+         
+        private readonly IEnvelopeNotificationService _envelopeNotificationService;
 
-
-        public EnvelopeService(ICurrentUser currentUser, IUnitOfWork unitOfWork, IFileStorage fileStorage, IRepository<Envelope> envelopeRepository, IRepository<Fields> envelopeField, IRepository<Recipients> envelopeRecipient, IRepository<Documents> envelopeDocument, IRepository<User> userRepository, IRepository<TemplateShare> templateShareRepository, ITemplateRepository templateRepository, IRepository<TemplateDocument> templateDocumentRepository, IRepository<TemplateField> templateFieldRepository, IRepository<TemplateRecipientRole> templateRecipientRoleRepository, IRepository<TemplateRoutingRule> templateRoutingRuleRepository, IRepository<TemplateRoutingRuleSet> templateRoutingRuleSetRepository, IRepository<EnvelopeRoutingRule> envelopeRoutingRuleRepository, IRepository<EnvelopeRoutingRuleSet> envelopeRoutingRuleSetRepository, IRepository<TemplateRoutingCondition> templateRoutingConditionRepository, IRepository<EnvelopeRoutingCondition> envelopeRoutingConditionRepository, IRepository<Events> eventRepository, IRepository<StatusHistory> statusHistoryRepository, IRepository<EnvelopeFieldValue> fieldValueRepository, IRepository<Signature> signatureRepository, IRepository<Stamps> stampRepository, IRepository<EnvelopeAppliedSignature> appliedSignatureRepository, IRepository<EnvelopeRoutingRule> envelopeRoutingRule, IRepository<EnvelopeRoutingRuleSet> envelopeRoutingRuleSet, IRepository<EnvelopeRoutingCondition> envelopeRoutingCondition, IFinalPdfRenderer finalPdfRenderer, IRepository<EnvelopeFieldValue> envelopeFieldValue, IRepository<EnvelopeAppliedSignature> envelopeAppliedSignature, ICompletionCertificateGenerator completionCertificateGenerator, IRepository<EnvelopeFinalization> envelopeFinalizationRepository)
+        public EnvelopeService(ICurrentUser currentUser, IUnitOfWork unitOfWork, IFileStorage fileStorage, IRepository<Envelope> envelopeRepository, IRepository<Fields> envelopeField, IRepository<Recipients> envelopeRecipient, IRepository<Documents> envelopeDocument, IRepository<User> userRepository, IRepository<Events> eventRepository, IRepository<StatusHistory> statusHistoryRepository, IRepository<TemplateShare> templateShareRepository, IRepository<TemplateDocument> templateDocumentRepository, IRepository<TemplateField> templateFieldRepository, IRepository<TemplateRecipientRole> templateRecipientRoleRepository, IRepository<TemplateRoutingRule> templateRoutingRuleRepository, IRepository<TemplateRoutingRuleSet> templateRoutingRuleSetRepository, IRepository<EnvelopeRoutingRule> envelopeRoutingRuleRepository, IRepository<EnvelopeRoutingRuleSet> envelopeRoutingRuleSetRepository, IRepository<TemplateRoutingCondition> templateRoutingConditionRepository, IRepository<EnvelopeRoutingCondition> envelopeRoutingConditionRepository, ITemplateRepository templateRepository, IRepository<EnvelopeFieldValue> fieldValueRepository, IRepository<Signature> signatureRepository, IRepository<Stamps> stampRepository, IRepository<EnvelopeRoutingRule> envelopeRoutingRule, IRepository<EnvelopeRoutingRuleSet> envelopeRoutingRuleSet, IRepository<EnvelopeRoutingCondition> envelopeRoutingCondition, IRepository<EnvelopeAppliedSignature> appliedSignatureRepository, IRepository<EnvelopeFieldValue> envelopeFieldValue, IRepository<EnvelopeAppliedSignature> envelopeAppliedSignature, IRepository<EnvelopeFinalization> envelopeFinalizationRepository, IEnvelopeNotificationService envelopeNotificationService)
         {
             _currentUser = currentUser;
             _unitOfWork = unitOfWork;
@@ -67,8 +67,9 @@ namespace LV.SignFlow.Application.Envelopes
             _envelopeRecipient = envelopeRecipient;
             _envelopeDocument = envelopeDocument;
             _userRepository = userRepository;
+            _eventRepository = eventRepository;
+            _statusHistoryRepository = statusHistoryRepository;
             _templateShareRepository = templateShareRepository;
-            _templateRepository = templateRepository;
             _templateDocumentRepository = templateDocumentRepository;
             _templateFieldRepository = templateFieldRepository;
             _templateRecipientRoleRepository = templateRecipientRoleRepository;
@@ -78,20 +79,18 @@ namespace LV.SignFlow.Application.Envelopes
             _envelopeRoutingRuleSetRepository = envelopeRoutingRuleSetRepository;
             _templateRoutingConditionRepository = templateRoutingConditionRepository;
             _envelopeRoutingConditionRepository = envelopeRoutingConditionRepository;
-            _eventRepository = eventRepository;
-            _statusHistoryRepository = statusHistoryRepository;
+            _templateRepository = templateRepository;
             _fieldValueRepository = fieldValueRepository;
             _signatureRepository = signatureRepository;
             _stampRepository = stampRepository;
-            _appliedSignatureRepository = appliedSignatureRepository;
             _envelopeRoutingRule = envelopeRoutingRule;
             _envelopeRoutingRuleSet = envelopeRoutingRuleSet;
             _envelopeRoutingCondition = envelopeRoutingCondition;
-            _finalPdfRenderer = finalPdfRenderer;
+            _appliedSignatureRepository = appliedSignatureRepository;
             _envelopeFieldValue = envelopeFieldValue;
             _envelopeAppliedSignature = envelopeAppliedSignature;
-            _completionCertificateGenerator = completionCertificateGenerator;
             _envelopeFinalizationRepository = envelopeFinalizationRepository;
+            _envelopeNotificationService = envelopeNotificationService;
         }
 
         private void EnsureAuthenticated()
@@ -2180,6 +2179,11 @@ namespace LV.SignFlow.Application.Envelopes
 
             await _unitOfWork.SaveChangesAsync(
               cancellationToken);
+
+            await _envelopeNotificationService
+    .NotifyEnvelopeSentAsync(
+        envelope.Id,
+        cancellationToken);
         }
 
         private async Task ValidateRoutingDependenciesAsync(
@@ -3335,16 +3339,36 @@ namespace LV.SignFlow.Application.Envelopes
  cancellationToken,
  existingValues.ToList());
 
-            await TryCompleteEnvelopeAsync(
-                envelope,
-                routingRecipients,
-                now,
+            var envelopeCompleted =
+    await TryCompleteEnvelopeAsync(
+        envelope,
+        routingRecipients,
+        now,
+        cancellationToken);
+
+            envelope.UpdatedAt = now;
+
+            await _unitOfWork.SaveChangesAsync(
                 cancellationToken);
 
-                envelope.UpdatedAt = now;
-
-                await _unitOfWork.SaveChangesAsync(
+            await _envelopeNotificationService
+                .NotifyRecipientSignedAsync(
+                    envelope.Id,
+                    recipient.Id,
                     cancellationToken);
+
+            if (envelopeCompleted)
+            {
+                await _envelopeNotificationService
+                    .NotifyEnvelopeCompletedAsync(
+                        envelope.Id,
+                        cancellationToken);
+            }
+
+            await _envelopeNotificationService.NotifyRecipientSignedAsync(
+    envelope.Id,
+    recipient.Id,
+    cancellationToken);
 
 
         }
@@ -3412,7 +3436,7 @@ namespace LV.SignFlow.Application.Envelopes
 
         }
 
-        private async Task TryCompleteEnvelopeAsync(
+        private async Task<bool> TryCompleteEnvelopeAsync(
     Envelope envelope,
     IReadOnlyList<Recipients> recipients,
     DateTimeOffset now,
@@ -3426,7 +3450,7 @@ namespace LV.SignFlow.Application.Envelopes
 
             if (hasIncompleteRequiredRecipient)
             {
-                return;
+                return false;
             }
 
             foreach (
@@ -3453,7 +3477,7 @@ namespace LV.SignFlow.Application.Envelopes
 
             if (!changed)
             {
-                return;
+                return false;
             }
 
             await _statusHistoryRepository.AddAsync(
@@ -3509,6 +3533,8 @@ namespace LV.SignFlow.Application.Envelopes
                 envelope.Id,
                 now,
                 cancellationToken);
+
+            return true;            
         }
 
         private EnvelopeFieldValue? CreateFieldValue(
@@ -3941,6 +3967,10 @@ namespace LV.SignFlow.Application.Envelopes
 
             await _unitOfWork.SaveChangesAsync(
                 cancellationToken);
+            await _envelopeNotificationService.NotifyEnvelopeDeclinedAsync(
+      envelope.Id,
+      recipient.Id,
+      cancellationToken);
         }
 
         public async Task VoidAsync(Guid envelopeId, VoidAndDeclineEnvelopeRequest request, CancellationToken cancellationToken =
@@ -4077,6 +4107,10 @@ namespace LV.SignFlow.Application.Envelopes
                 cancellationToken);
 
             await _unitOfWork.SaveChangesAsync(
+     cancellationToken);
+
+            await _envelopeNotificationService.NotifyEnvelopeVoidedAsync(
+                envelope.Id,
                 cancellationToken);
         }
 

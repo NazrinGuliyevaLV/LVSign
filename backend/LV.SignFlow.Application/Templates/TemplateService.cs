@@ -26,9 +26,10 @@ namespace LV.SignFlow.Application.Templates
         private readonly IRepository<TemplateRoutingRule> _templateRoutingRuleRepository;
         private readonly IRepository<TemplateRoutingCondition> _templateRoutingConditionRepository;
         private readonly IRepository<TemplateShare> _templateShareRepository;
+        private readonly IRepository<TemplateVersion> _templateVersionRepository;
         private readonly IRepository<User> _userRepository;
 
-        public TemplateService(ITemplateRepository templateRepository, ICurrentUser curentUser, IUnitOfWork unitOfWork, IFileStorage fileStorage, IRepository<TemplateRecipientRole> recipientRoleRepository, IRepository<TemplateDocument> templateDocumentRepository, IRepository<User> userRepository, IRepository<TemplateField> templateFieldRepository, IRepository<TemplateRoutingRuleSet> templateRoutingRuleSetRepository = null, IRepository<TemplateRoutingRule> templateRoutingRuleRepository = null, IRepository<TemplateRoutingCondition> templateRoutingConditionRepository = null, IRepository<TemplateShare> templateShareRepository = null)
+        public TemplateService(ITemplateRepository templateRepository, ICurrentUser curentUser, IUnitOfWork unitOfWork, IFileStorage fileStorage, IRepository<TemplateRecipientRole> recipientRoleRepository, IRepository<TemplateDocument> templateDocumentRepository, IRepository<User> userRepository, IRepository<TemplateField> templateFieldRepository, IRepository<TemplateRoutingRuleSet> templateRoutingRuleSetRepository = null, IRepository<TemplateRoutingRule> templateRoutingRuleRepository = null, IRepository<TemplateRoutingCondition> templateRoutingConditionRepository = null, IRepository<TemplateShare> templateShareRepository = null, IRepository<TemplateVersion> templateVersionRepository = null)
         {
             _templateRepository = templateRepository;
             _currentUser = curentUser;
@@ -42,6 +43,7 @@ namespace LV.SignFlow.Application.Templates
             _templateRoutingRuleRepository = templateRoutingRuleRepository;
             _templateRoutingConditionRepository = templateRoutingConditionRepository;
             _templateShareRepository = templateShareRepository;
+            _templateVersionRepository = templateVersionRepository;
         }
 
         private void EnsureAuthenticated()
@@ -2085,6 +2087,714 @@ namespace LV.SignFlow.Application.Templates
 
             await _unitOfWork.SaveChangesAsync(
                 cancellationToken);
+        }
+
+        public async Task<TemplateDetailsDto> PublishAsync(
+    Guid templateId,
+    CancellationToken cancellationToken = default)
+        {
+            EnsureAuthenticated();
+
+            var template =
+                await _templateRepository.GetByIdForOrganizationAsync(
+                    templateId,
+                    _currentUser.OrganizationId,
+                    cancellationToken);
+
+            if (template is null)
+            {
+                throw new KeyNotFoundException(
+                    "Template was not found.");
+            }
+
+            if (template.OwnerUserId != _currentUser.UserId)
+            {
+                throw new UnauthorizedAccessException(
+                    "Only the template owner can publish this template.");
+            }
+
+            var latestVersion =
+                template.Versions
+                    .OrderByDescending(x => x.VersionNumber)
+                    .FirstOrDefault();
+
+            if (latestVersion is null)
+            {
+                throw new InvalidOperationException(
+                    "The template does not contain a version.");
+            }
+
+            if (latestVersion.IsPublished)
+            {
+                throw new InvalidOperationException(
+                    "The latest template version is already published.");
+            }
+
+            var documents =
+                await _templateDocumentRepository.FindAsync(
+                    x =>
+                        x.TemplateVersionId ==
+                        latestVersion.Id,
+                    cancellationToken);
+
+            if (documents.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "A template must contain at least one document before publishing.");
+            }
+
+            var recipientRoles =
+                await _recipientRoleRepository.FindAsync(
+                    x =>
+                        x.TemplateVersionId ==
+                        latestVersion.Id,
+                    cancellationToken);
+
+            if (recipientRoles.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "A template must contain at least one recipient role before publishing.");
+            }
+
+            /*
+             * Basic routing validation.
+             */
+            if (recipientRoles.Any(x =>
+                    x.RoutingOrder <= 0))
+            {
+                throw new InvalidOperationException(
+                    "All recipient roles must have a valid routing order.");
+            }
+
+            latestVersion.IsPublished = true;
+
+            _templateVersionRepository.Update(
+                latestVersion);
+
+            template.Status =
+                TemplateStatus.Published;
+
+            template.UpdatedAt =
+                DateTimeOffset.UtcNow;
+
+            _templateRepository.Update(
+                template);
+
+            await _unitOfWork.SaveChangesAsync(
+                cancellationToken);
+
+            return MapTemplateDetails(
+                template,
+                latestVersion);
+        }
+
+        private static TemplateDetailsDto MapTemplateDetails(
+    Template template,
+    TemplateVersion latestVersion)
+        {
+            var latestPublishedVersionNumber =
+                template.Versions
+                    .Where(x => x.IsPublished)
+                    .OrderByDescending(
+                        x => x.VersionNumber)
+                    .Select(
+                        x => (int?)x.VersionNumber)
+                    .FirstOrDefault();
+
+            /*
+             * Current latestVersion dəyişmiş ola bilər,
+             * ona görə onun vəziyyətini də nəzərə alırıq.
+             */
+            if (latestVersion.IsPublished)
+            {
+                latestPublishedVersionNumber =
+                    latestVersion.VersionNumber;
+            }
+
+            return new TemplateDetailsDto
+            {
+                Id = template.Id,
+
+                Name = template.Name,
+
+                Description =
+                    template.Description,
+
+                Status =
+                    template.Status,
+
+                Category =
+                    template.Category,
+
+                OwnerUserId =
+                    template.OwnerUserId,
+
+                LatestVersionId =
+                    latestVersion.Id,
+
+                LatestVersionNumber =
+                    latestVersion.VersionNumber,
+
+                LatestVersionIsPublished =
+                    latestVersion.IsPublished,
+
+                HasDraftVersion =
+                    !latestVersion.IsPublished,
+
+                LatestPublishedVersionNumber =
+                    latestPublishedVersionNumber,
+
+                CreatedAt =
+                    template.CreatedAt,
+
+                UpdatedAt =
+                    template.UpdatedAt,
+
+                IsOwner = true
+            };
+        }
+
+        public async Task<TemplateDetailsDto> CreateNewVersionAsync(
+    Guid templateId,
+    CancellationToken cancellationToken = default)
+        {
+            EnsureAuthenticated();
+
+            var template =
+                await _templateRepository.GetByIdForOrganizationAsync(
+                    templateId,
+                    _currentUser.OrganizationId,
+                    cancellationToken);
+
+            if (template is null)
+            {
+                throw new KeyNotFoundException(
+                    "Template was not found.");
+            }
+
+            if (template.OwnerUserId !=
+                _currentUser.UserId)
+            {
+                throw new UnauthorizedAccessException(
+                    "Only the template owner can create a new version.");
+            }
+
+            /*
+             * Eyni anda yalnız bir draft version olsun.
+             */
+            var existingDraft =
+                template.Versions
+                    .FirstOrDefault(
+                        x => !x.IsPublished);
+
+            if (existingDraft is not null)
+            {
+                throw new InvalidOperationException(
+                    "This template already has a draft version.");
+            }
+
+            var sourceVersion =
+                template.Versions
+                    .Where(x => x.IsPublished)
+                    .OrderByDescending(
+                        x => x.VersionNumber)
+                    .FirstOrDefault();
+
+            if (sourceVersion is null)
+            {
+                throw new InvalidOperationException(
+                    "A new version can only be created from a published template.");
+            }
+
+            var newVersion =
+                new TemplateVersion
+                {
+                    Id = Guid.NewGuid(),
+
+                    TemplateId =
+                        template.Id,
+
+                    VersionNumber =
+                        template.Versions.Max(
+                            x => x.VersionNumber) + 1,
+
+                    IsPublished = false,
+
+                    CreatedAt =
+                        DateTimeOffset.UtcNow,
+
+                    CreatedByUserId =
+                        _currentUser.UserId
+                };
+
+            /*
+             * OldId → NewId maps.
+             */
+            var roleIdMap =
+                new Dictionary<Guid, Guid>();
+
+            var documentIdMap =
+                new Dictionary<Guid, Guid>();
+
+            var fieldIdMap =
+                new Dictionary<Guid, Guid>();
+
+            var ruleSetIdMap =
+                new Dictionary<Guid, Guid>();
+
+            var ruleIdMap =
+                new Dictionary<Guid, Guid>();
+
+            var uploadedPaths =
+                new List<string>();
+
+            try
+            {
+                await _templateVersionRepository.AddAsync(
+                    newVersion,
+                    cancellationToken);
+
+                /*
+                 * 1. Recipient Roles
+                 */
+                var sourceRoles =
+                    await _recipientRoleRepository.FindAsync(
+                        x =>
+                            x.TemplateVersionId ==
+                            sourceVersion.Id,
+                        cancellationToken);
+
+                foreach (var sourceRole in sourceRoles)
+                {
+                    var newRoleId =
+                        Guid.NewGuid();
+
+                    roleIdMap[
+                        sourceRole.Id] =
+                        newRoleId;
+
+                    var newRole =
+                        new TemplateRecipientRole
+                        {
+                            Id =
+                                newRoleId,
+
+                            TemplateVersionId =
+                                newVersion.Id,
+
+                            Name =
+                                sourceRole.Name,
+
+                            RecipientType =
+                                sourceRole.RecipientType,
+
+                            RoutingOrder =
+                                sourceRole.RoutingOrder,
+
+                            IsRequired =
+                                sourceRole.IsRequired,
+
+                            DefaultUserId =
+                                sourceRole.DefaultUserId,
+
+                            AllowSenderEditRecipient =
+                                sourceRole.AllowSenderEditRecipient,
+
+                            AllowSenderDeleteRecipient =
+                                sourceRole.AllowSenderDeleteRecipient,
+
+                            AllowSenderChangeRoutingOrder =
+                                sourceRole.AllowSenderChangeRoutingOrder
+                        };
+
+                    await _recipientRoleRepository.AddAsync(
+                        newRole,
+                        cancellationToken);
+                }
+
+                /*
+                 * 2. Documents
+                 *
+                 * Published document BlobPath-ını reuse etmirik.
+                 */
+                var sourceDocuments =
+                    await _templateDocumentRepository.FindAsync(
+                        x =>
+                            x.TemplateVersionId ==
+                            sourceVersion.Id,
+                        cancellationToken);
+
+                foreach (var sourceDocument in
+                         sourceDocuments.OrderBy(x => x.Order))
+                {
+                    var newDocumentId =
+                        Guid.NewGuid();
+
+                    documentIdMap[
+                        sourceDocument.Id] =
+                        newDocumentId;
+
+                    await using var sourceStream =
+                        await _fileStorage.OpenReadAsync(
+                            sourceDocument.BlobPath,
+                            cancellationToken);
+
+                    var folder =
+                        $"templates/{template.Id}/{newVersion.Id}/documents";
+
+                    var newBlobPath =
+                        await _fileStorage.UploadAsync(
+                            sourceStream,
+                            sourceDocument.OriginalFileName,
+                            sourceDocument.ContentType,
+                            folder,
+                            cancellationToken);
+
+                    uploadedPaths.Add(
+                        newBlobPath);
+
+                    var newDocument =
+                        new TemplateDocument
+                        {
+                            Id =
+                                newDocumentId,
+
+                            TemplateVersionId =
+                                newVersion.Id,
+
+                            OriginalFileName =
+                                sourceDocument.OriginalFileName,
+
+                            BlobPath =
+                                newBlobPath,
+
+                            ContentType =
+                                sourceDocument.ContentType,
+
+                            FileSize =
+                                sourceDocument.FileSize,
+
+                            FileHash =
+                                sourceDocument.FileHash,
+
+                            PageCount =
+                                sourceDocument.PageCount,
+
+                            Order =
+                                sourceDocument.Order
+                        };
+
+                    await _templateDocumentRepository.AddAsync(
+                        newDocument,
+                        cancellationToken);
+                }
+
+                /*
+                 * 3. Fields
+                 */
+                var sourceDocumentIds =
+                    sourceDocuments
+                        .Select(x => x.Id)
+                        .ToHashSet();
+
+                var sourceFields =
+                    sourceDocumentIds.Count == 0
+                        ? Array.Empty<TemplateField>()
+                        : await _templateFieldRepository.FindAsync(
+                            x =>
+                                sourceDocumentIds.Contains(
+                                    x.TemplateDocumentId),
+                            cancellationToken);
+
+                foreach (var sourceField in sourceFields)
+                {
+                    var newFieldId =
+                        Guid.NewGuid();
+
+                    fieldIdMap[
+                        sourceField.Id] =
+                        newFieldId;
+
+                    Guid? newRecipientRoleId =
+                        null;
+
+                    if (sourceField.RecipientRoleId.HasValue)
+                    {
+                        if (!roleIdMap.TryGetValue(
+                                sourceField.RecipientRoleId.Value,
+                                out
+                                var mappedRoleId))
+                        {
+                            throw new InvalidOperationException(
+                                "A template field references an invalid recipient role.");
+                        }
+
+                        newRecipientRoleId =
+                            mappedRoleId;
+                    }
+
+                    if (!documentIdMap.TryGetValue(
+                            sourceField.TemplateDocumentId,
+                            out
+                            var mappedDocumentId))
+                    {
+                        throw new InvalidOperationException(
+                            "A template field references an invalid document.");
+                    }
+
+                    var newField =
+                        new TemplateField
+                        {
+                            Id =
+                                newFieldId,
+
+                            TemplateDocumentId =
+                                mappedDocumentId,
+
+                            RecipientRoleId =
+                                newRecipientRoleId,
+
+                            OwnerType =
+                                sourceField.OwnerType,
+
+                            FieldType =
+                                sourceField.FieldType,
+
+                            PageNumber =
+                                sourceField.PageNumber,
+
+                            X =
+                                sourceField.X,
+
+                            Y =
+                                sourceField.Y,
+
+                            Width =
+                                sourceField.Width,
+
+                            Height =
+                                sourceField.Height,
+
+                            IsRequired =
+                                sourceField.IsRequired
+                        };
+
+                    await _templateFieldRepository.AddAsync(
+                        newField,
+                        cancellationToken);
+                }
+
+                /*
+                 * 4. Routing Rule Sets
+                 */
+                var sourceRuleSets =
+                    await _templateRoutingRuleSetRepository.FindAsync(
+                        x =>
+                            x.TemplateVersionId ==
+                            sourceVersion.Id,
+                        cancellationToken);
+
+                foreach (var sourceRuleSet in sourceRuleSets)
+                {
+                    var newRuleSetId =
+                        Guid.NewGuid();
+
+                    ruleSetIdMap[
+                        sourceRuleSet.Id] =
+                        newRuleSetId;
+
+                    await _templateRoutingRuleSetRepository.AddAsync(
+                        new TemplateRoutingRuleSet
+                        {
+                            Id =
+                                newRuleSetId,
+
+                            TemplateVersionId =
+                                newVersion.Id,
+
+                            Name =
+                                sourceRuleSet.Name,
+
+                            IsActive =
+                                sourceRuleSet.IsActive,
+
+                            CreatedAt =
+                                DateTimeOffset.UtcNow,
+
+                            UpdatedAt =
+                                DateTimeOffset.UtcNow
+                        },
+                        cancellationToken);
+                }
+
+                /*
+                 * 5. Routing Rules
+                 */
+                var sourceRuleSetIds =
+                    sourceRuleSets
+                        .Select(x => x.Id)
+                        .ToHashSet();
+
+                var sourceRules =
+                    sourceRuleSetIds.Count == 0
+                        ? Array.Empty<TemplateRoutingRule>()
+                        : await _templateRoutingRuleRepository.FindAsync(
+                            x =>
+                                sourceRuleSetIds.Contains(
+                                    x.TemplateRoutingRuleSetId),
+                            cancellationToken);
+
+                foreach (var sourceRule in sourceRules)
+                {
+                    if (!ruleSetIdMap.TryGetValue(
+                            sourceRule.TemplateRoutingRuleSetId,
+                            out
+                            var mappedRuleSetId))
+                    {
+                        throw new InvalidOperationException(
+                            "A routing rule references an invalid rule set.");
+                    }
+
+                    if (!roleIdMap.TryGetValue(
+                            sourceRule.TargetRecipientRoleId,
+                            out
+                            var mappedTargetRoleId))
+                    {
+                        throw new InvalidOperationException(
+                            "A routing rule references an invalid recipient role.");
+                    }
+
+                    var newRuleId =
+                        Guid.NewGuid();
+
+                    ruleIdMap[
+                        sourceRule.Id] =
+                        newRuleId;
+
+                    await _templateRoutingRuleRepository.AddAsync(
+                        new TemplateRoutingRule
+                        {
+                            Id =
+                                newRuleId,
+
+                            TemplateRoutingRuleSetId =
+                                mappedRuleSetId,
+
+                            TargetRecipientRoleId =
+                                mappedTargetRoleId,
+
+                            Name =
+                                sourceRule.Name,
+
+                            MatchType =
+                                sourceRule.MatchType,
+
+                            Priority =
+                                sourceRule.Priority,
+
+                            IsActive =
+                                sourceRule.IsActive
+                        },
+                        cancellationToken);
+                }
+
+                /*
+                 * 6. Routing Conditions
+                 */
+                var sourceRuleIds =
+                    sourceRules
+                        .Select(x => x.Id)
+                        .ToHashSet();
+
+                var sourceConditions =
+                    sourceRuleIds.Count == 0
+                        ? Array.Empty<TemplateRoutingCondition>()
+                        : await _templateRoutingConditionRepository.FindAsync(
+                            x =>
+                                sourceRuleIds.Contains(
+                                    x.TemplateRoutingRuleId),
+                            cancellationToken);
+
+                foreach (var sourceCondition in
+                         sourceConditions)
+                {
+                    if (!ruleIdMap.TryGetValue(
+                            sourceCondition.TemplateRoutingRuleId,
+                            out
+                            var mappedRuleId))
+                    {
+                        throw new InvalidOperationException(
+                            "A routing condition references an invalid rule.");
+                    }
+
+                    if (!fieldIdMap.TryGetValue(
+                            sourceCondition.SourceTemplateFieldId,
+                            out
+                            var mappedFieldId))
+                    {
+                        throw new InvalidOperationException(
+                            "A routing condition references an invalid field.");
+                    }
+
+                    await _templateRoutingConditionRepository.AddAsync(
+                        new TemplateRoutingCondition
+                        {
+                            Id =
+                                Guid.NewGuid(),
+
+                            TemplateRoutingRuleId =
+                                mappedRuleId,
+
+                            SourceTemplateFieldId =
+                                mappedFieldId,
+
+                            Operator =
+                                sourceCondition.Operator,
+
+                            ComparisonValue =
+                                sourceCondition.ComparisonValue
+                        },
+                        cancellationToken);
+                }
+
+                template.Status =
+                    TemplateStatus.Draft;
+
+                template.UpdatedAt =
+                    DateTimeOffset.UtcNow;
+
+                _templateRepository.Update(
+                    template);
+
+                await _unitOfWork.SaveChangesAsync(
+                    cancellationToken);
+
+                return MapTemplateDetails(
+                    template,
+                    newVersion);
+            }
+            catch
+            {
+                /*
+                 * Storage copy uğurlu olub DB save uğursuz olarsa
+                 * orphan PDF-ləri saxlamırıq.
+                 */
+                foreach (var path in uploadedPaths)
+                {
+                    try
+                    {
+                        await _fileStorage.DeleteAsync(
+                            path,
+                            CancellationToken.None);
+                    }
+                    catch
+                    {
+                        // Cleanup failure əsas exception-u gizlətməsin.
+                    }
+                }
+
+                throw;
+            }
         }
     }
 }

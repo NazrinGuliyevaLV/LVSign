@@ -707,6 +707,128 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.ToTable("EnvelopeStatusHistories", (string)null);
                 });
 
+            modelBuilder.Entity("LV.SignFlow.Domain.Entities.Notifications.Notification", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("EnvelopeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("IsRead")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<DateTime?>("ReadAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(250)
+                        .HasColumnType("nvarchar(250)");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAtUtc");
+
+                    b.HasIndex("EnvelopeId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "IsRead");
+
+                    b.ToTable("Notifications");
+                });
+
+            modelBuilder.Entity("LV.SignFlow.Domain.Entities.Notifications.NotificationDelivery", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Channel")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<Guid>("NotificationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("SentAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NotificationId");
+
+                    b.HasIndex("Status", "Channel");
+
+                    b.ToTable("NotificationDeliveries");
+                });
+
+            modelBuilder.Entity("LV.SignFlow.Domain.Entities.Notifications.NotificationPreference", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("EmailEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("EnvelopeCompletedEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("EnvelopeDeclinedEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("EnvelopeSentEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("EnvelopeVoidedEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("InAppEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("RecipientSignedEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("SigningReminderEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId")
+                        .IsUnique();
+
+                    b.ToTable("NotificationPreferences");
+                });
+
             modelBuilder.Entity("LV.SignFlow.Domain.Entities.Organizations.Department", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2080,6 +2202,46 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.Navigation("Envelope");
                 });
 
+            modelBuilder.Entity("LV.SignFlow.Domain.Entities.Notifications.Notification", b =>
+                {
+                    b.HasOne("LV.SignFlow.Domain.Entities.Envelopes.Envelope", "Envelope")
+                        .WithMany("Notifications")
+                        .HasForeignKey("EnvelopeId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("LV.SignFlow.Domain.Entities.Users.User", "User")
+                        .WithMany("Notifications")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Envelope");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("LV.SignFlow.Domain.Entities.Notifications.NotificationDelivery", b =>
+                {
+                    b.HasOne("LV.SignFlow.Domain.Entities.Notifications.Notification", "Notification")
+                        .WithMany("Deliveries")
+                        .HasForeignKey("NotificationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Notification");
+                });
+
+            modelBuilder.Entity("LV.SignFlow.Domain.Entities.Notifications.NotificationPreference", b =>
+                {
+                    b.HasOne("LV.SignFlow.Domain.Entities.Users.User", "User")
+                        .WithOne("NotificationPreference")
+                        .HasForeignKey("LV.SignFlow.Domain.Entities.Notifications.NotificationPreference", "UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("LV.SignFlow.Domain.Entities.Organizations.Department", b =>
                 {
                     b.HasOne("LV.SignFlow.Domain.Entities.Organizations.Organization", "Organization")
@@ -2381,6 +2543,8 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
 
                     b.Navigation("Finalization");
 
+                    b.Navigation("Notifications");
+
                     b.Navigation("Recipients");
 
                     b.Navigation("StatusHistory");
@@ -2412,6 +2576,11 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.Navigation("Fields");
 
                     b.Navigation("Rules");
+                });
+
+            modelBuilder.Entity("LV.SignFlow.Domain.Entities.Notifications.Notification", b =>
+                {
+                    b.Navigation("Deliveries");
                 });
 
             modelBuilder.Entity("LV.SignFlow.Domain.Entities.Organizations.Department", b =>
@@ -2501,6 +2670,10 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.Navigation("AuditLogs");
 
                     b.Navigation("CreatedEnvelopes");
+
+                    b.Navigation("NotificationPreference");
+
+                    b.Navigation("Notifications");
 
                     b.Navigation("PermissionProfiles");
 

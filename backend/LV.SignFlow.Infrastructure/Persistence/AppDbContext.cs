@@ -1,5 +1,6 @@
 ﻿using LV.SignFlow.Domain.Entities.Audit;
 using LV.SignFlow.Domain.Entities.Envelopes;
+using LV.SignFlow.Domain.Entities.Notifications;
 using LV.SignFlow.Domain.Entities.Organizations;
 using LV.SignFlow.Domain.Entities.Signing;
 using LV.SignFlow.Domain.Entities.Templates;
@@ -61,6 +62,12 @@ namespace LV.SignFlow.Infrastructure.Persistence
         public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
         public DbSet<EnvelopeAppliedSignature> EnvelopeAppliedSignatures => Set<EnvelopeAppliedSignature>();
         public DbSet<EnvelopeFinalization> EnvelopeFinalizations => Set<EnvelopeFinalization>();
+
+        public DbSet<Notification> Notifications => Set<Notification>();
+
+        public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
+
+        public DbSet<NotificationPreference> NotificationPreferences => Set<NotificationPreference>();
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);

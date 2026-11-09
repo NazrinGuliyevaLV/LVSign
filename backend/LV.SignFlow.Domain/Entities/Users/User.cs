@@ -1,5 +1,6 @@
 ﻿using LV.SignFlow.Domain.Entities.Audit;
 using LV.SignFlow.Domain.Entities.Envelopes;
+using LV.SignFlow.Domain.Entities.Notifications;
 using LV.SignFlow.Domain.Entities.Organizations;
 using LV.SignFlow.Domain.Entities.Signing;
 using LV.SignFlow.Domain.Entities.Templates;
@@ -52,5 +53,10 @@ namespace LV.SignFlow.Domain.Entities.Users
         public Organization Organization { get; set; } = null!;
 
         public Department? Department { get; set; }
+
+        public ICollection<Notification> Notifications { get; set; }
+    = new List<Notification>();
+
+        public NotificationPreference? NotificationPreference { get; set; }
     }
 }

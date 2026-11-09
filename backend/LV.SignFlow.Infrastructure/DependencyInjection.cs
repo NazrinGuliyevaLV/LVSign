@@ -1,6 +1,8 @@
-﻿using LV.SignFlow.Application.Common.Interfaces;
+﻿using LV.SignFlow.Application.Common.Email;
+using LV.SignFlow.Application.Common.Interfaces;
 using LV.SignFlow.Application.Finalization;
 using LV.SignFlow.Application.Templates;
+using LV.SignFlow.Infrastructure.Email;
 using LV.SignFlow.Infrastructure.Pdf;
 using LV.SignFlow.Infrastructure.Persistence;
 using LV.SignFlow.Infrastructure.Persistence.Finalization;
@@ -37,6 +39,8 @@ namespace LV.SignFlow.Infrastructure
             services.AddScoped<IEnvelopeFinalizationProcessor,EnvelopeFinalizationProcessor>();
             services.AddScoped<IEnvelopeFinalizationQueue,EfEnvelopeFinalizationQueue>();
             services.AddScoped<ICompletionCertificateDataBuilder,CompletionCertificateDataBuilder>();
+            services.AddScoped<IEmailSender, DevelopmentEmailSender>();
+
             services.Configure<StorageOptions>(options =>
             {
                 options.Provider =

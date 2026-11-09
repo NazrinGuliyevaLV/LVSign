@@ -1,4 +1,5 @@
-﻿using LV.SignFlow.Domain.Entities.Organizations;
+﻿using LV.SignFlow.Domain.Entities.Notifications;
+using LV.SignFlow.Domain.Entities.Organizations;
 using LV.SignFlow.Domain.Entities.Templates;
 using LV.SignFlow.Domain.Entities.Users;
 using LV.SignFlow.Domain.Enums.EnvelopeEnums;
@@ -48,7 +49,8 @@ namespace LV.SignFlow.Domain.Entities.Envelopes
         public ICollection<Recipients> Recipients { get; set; }=new List<Recipients>();
         public ICollection<EnvelopeRoutingRuleSet> EnvelopeRoutingRuleSets { get; set; }
     = new List<EnvelopeRoutingRuleSet>();
-
+        public ICollection<Notification> Notifications { get; set; }
+    = new List<Notification>();
         public bool TransitionTo(
     EnvelopeStatus newStatus,
     DateTimeOffset now)

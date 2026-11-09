@@ -58,5 +58,9 @@ namespace LV.SignFlow.Application.Templates
         Task DeleteShareAsync(Guid templateId,Guid shareId,CancellationToken cancellationToken = default);
 
 
+        Task<TemplateDetailsDto> PublishAsync(Guid templateId, CancellationToken cancellationToken = default);
+        Task<TemplateDetailsDto> CreateNewVersionAsync(Guid templateId, CancellationToken cancellationToken = default);
+
+
     }
 }
