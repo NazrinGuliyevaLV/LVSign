@@ -24,6 +24,6 @@ namespace LV.SignFlow.Application.Templates.Dtos
         public bool IsOwner { get; set; }
         public bool HasDraftVersion { get; set; }
         public TemplateAccessLevel EffectiveAccessLevel { get; set; }
-
+        public TemplateCategory? Category { get; set; }
     }
 }

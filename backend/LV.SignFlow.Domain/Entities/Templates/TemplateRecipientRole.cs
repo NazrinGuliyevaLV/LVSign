@@ -31,5 +31,8 @@ namespace LV.SignFlow.Domain.Entities.Templates
         public ICollection<TemplateField> TemplateFields { get; set; } = new List<TemplateField>();
         public ICollection<TemplateRoutingRule> Rules { get; set; }
     = new List<TemplateRoutingRule>();
+
+        public ICollection<TemplateRoutingAction> RoutingActions { get; set; }
+    = new List<TemplateRoutingAction>();
     }
 }

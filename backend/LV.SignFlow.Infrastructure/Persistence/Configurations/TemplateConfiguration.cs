@@ -20,8 +20,7 @@ namespace LV.SignFlow.Infrastructure.Persistence.Configurations
             builder.Property(x => x.Description)
                .HasMaxLength(500);
 
-            builder.HasIndex(x=>x.Name)
-                .IsUnique();
+            
             builder.Property(x => x.Category);
 
             builder.HasOne(x => x.Organization)

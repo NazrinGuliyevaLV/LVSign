@@ -34,6 +34,9 @@ namespace LV.SignFlow.Application.Templates.Dtos
 
         public bool IsOwner { get; set; }
 
+        public int? ExpirationDays { get; set; }
+
+        public int? ReminderIntervalDays { get; set; }
         public TemplateAccessLevel EffectiveAccessLevel { get; set; }
     }
 }

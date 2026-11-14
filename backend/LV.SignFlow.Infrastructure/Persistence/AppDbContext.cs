@@ -27,6 +27,7 @@ namespace LV.SignFlow.Infrastructure.Persistence
         public DbSet<TemplateRecipientRole> TemplateRecipientRoles=>Set<TemplateRecipientRole>();
         public DbSet<TemplateRoutingCondition> TemplateRoutingConditions => Set<TemplateRoutingCondition>();
         public DbSet<TemplateRoutingRule> TemplateRoutingRules => Set<TemplateRoutingRule>();
+        public DbSet<TemplateRoutingAction> TemplateRoutingActions => Set<TemplateRoutingAction>();
         public DbSet<TemplateRoutingRuleSet> TemplateRoutingRuleSets => Set<TemplateRoutingRuleSet>();
         public DbSet<TemplateShare> TemplateShares => Set<TemplateShare>();
         public DbSet<TemplateVersion> TemplateVersions => Set<TemplateVersion>();
@@ -56,6 +57,7 @@ namespace LV.SignFlow.Infrastructure.Persistence
         public DbSet<EnvelopeRoutingRule> EnvelopeRoutingRules => Set<EnvelopeRoutingRule>();
 
         public DbSet<EnvelopeRoutingCondition> EnvelopeRoutingConditions => Set<EnvelopeRoutingCondition>();
+        public DbSet<EnvelopeRoutingAction> EnvelopeRoutingActions=> Set<EnvelopeRoutingAction>();
 
         public DbSet<Stamps> Stamps => Set<Stamps>();
         public DbSet<Signature> Signatures => Set<Signature>();
@@ -68,6 +70,7 @@ namespace LV.SignFlow.Infrastructure.Persistence
         public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
 
         public DbSet<NotificationPreference> NotificationPreferences => Set<NotificationPreference>();
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);

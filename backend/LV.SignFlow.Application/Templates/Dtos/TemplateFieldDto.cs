@@ -12,7 +12,7 @@ namespace LV.SignFlow.Application.Templates.Dtos
         public Guid TemplateDocumentId { get; set; }
 
         public Guid? RecipientRoleId { get; set; }
-
+        public FieldOwnerType OwnerType { get; set; }
         public FieldType FieldType { get; set; }
 
         public int PageNumber { get; set; }
@@ -26,5 +26,8 @@ namespace LV.SignFlow.Application.Templates.Dtos
         public decimal Height { get; set; }
 
         public bool IsRequired { get; set; }
+        public string? Label { get; set; }
+
+        public List<string>? Options { get; set; }
     }
 }

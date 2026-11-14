@@ -58,5 +58,9 @@ namespace LV.SignFlow.Domain.Entities.Envelopes
 
         public ICollection<EnvelopeRoutingRule> Rules { get; set; }
     = new List<EnvelopeRoutingRule>();
+
+        public ICollection<EnvelopeRoutingAction> RoutingActions { get; set; }
+    = new List<EnvelopeRoutingAction>();
+
     }
 }

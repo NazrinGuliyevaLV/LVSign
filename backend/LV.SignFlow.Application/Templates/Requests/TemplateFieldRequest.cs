@@ -24,6 +24,9 @@ namespace LV.SignFlow.Application.Templates.Requests
         public decimal Height { get; set; }
 
         public bool IsRequired { get; set; } = true;
+        public string? Label { get; set; }
+
+        public List<string>? Options { get; set; }
         public FieldOwnerType OwnerType { get; set; }
     = FieldOwnerType.Recipient;
     }

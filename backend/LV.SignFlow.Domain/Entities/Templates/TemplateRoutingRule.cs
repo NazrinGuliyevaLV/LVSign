@@ -29,5 +29,8 @@ namespace LV.SignFlow.Domain.Entities.Templates
 
         public ICollection<TemplateRoutingCondition> Conditions { get; set; }
             = new List<TemplateRoutingCondition>();
+
+        public ICollection<TemplateRoutingAction> Actions { get; set; }
+    = new List<TemplateRoutingAction>();
     }
 }

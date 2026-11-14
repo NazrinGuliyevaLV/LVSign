@@ -29,5 +29,7 @@ namespace LV.SignFlow.Domain.Entities.Envelopes
 
         public ICollection<EnvelopeRoutingCondition> Conditions { get; set; }
             = new List<EnvelopeRoutingCondition>();
+        public ICollection<EnvelopeRoutingAction> Actions { get; set; }
+    = new List<EnvelopeRoutingAction>();
     }
 }

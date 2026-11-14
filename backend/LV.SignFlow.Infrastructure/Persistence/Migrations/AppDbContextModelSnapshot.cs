@@ -386,6 +386,39 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.ToTable("EnvelopeFinalizations", (string)null);
                 });
 
+            modelBuilder.Entity("LV.SignFlow.Domain.Entities.Envelopes.EnvelopeRoutingAction", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("ActionType")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("EnvelopeRoutingRuleId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Order")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("RecipientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EnvelopeRoutingRuleId");
+
+                    b.HasIndex("RecipientId");
+
+                    b.HasIndex("EnvelopeRoutingRuleId", "Order")
+                        .IsUnique();
+
+                    b.HasIndex("EnvelopeRoutingRuleId", "RecipientId")
+                        .IsUnique();
+
+                    b.ToTable("EnvelopeRoutingActions", (string)null);
+                });
+
             modelBuilder.Entity("LV.SignFlow.Domain.Entities.Envelopes.EnvelopeRoutingCondition", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1026,9 +1059,6 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Name")
-                        .IsUnique();
-
                     b.HasIndex("OrganizationId");
 
                     b.HasIndex("OwnerUserId");
@@ -1097,6 +1127,14 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
 
                     b.Property<bool>("IsRequired")
                         .HasColumnType("bit");
+
+                    b.Property<string>("Label")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("OptionJson")
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
 
                     b.Property<int>("OwnerType")
                         .HasColumnType("int");
@@ -1173,6 +1211,36 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.HasIndex("TemplateVersionId", "RoutingOrder");
 
                     b.ToTable("TemplateRecipientRoles", (string)null);
+                });
+
+            modelBuilder.Entity("LV.SignFlow.Domain.Entities.Templates.TemplateRoutingAction", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("ActionType")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Order")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("RecipientRoleId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("TemplateRoutingRuleId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RecipientRoleId");
+
+                    b.HasIndex("TemplateRoutingRuleId");
+
+                    b.HasIndex("TemplateRoutingRuleId", "Order")
+                        .IsUnique();
+
+                    b.ToTable("TemplateRoutingActions", (string)null);
                 });
 
             modelBuilder.Entity("LV.SignFlow.Domain.Entities.Templates.TemplateRoutingCondition", b =>
@@ -1320,8 +1388,14 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("CreatedByUserId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<int?>("ExpirationDays")
+                        .HasColumnType("int");
+
                     b.Property<bool>("IsPublished")
                         .HasColumnType("bit");
+
+                    b.Property<int?>("ReminderIntervalDays")
+                        .HasColumnType("int");
 
                     b.Property<Guid>("TemplateId")
                         .HasColumnType("uniqueidentifier");
@@ -2072,6 +2146,25 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.Navigation("Envelope");
                 });
 
+            modelBuilder.Entity("LV.SignFlow.Domain.Entities.Envelopes.EnvelopeRoutingAction", b =>
+                {
+                    b.HasOne("LV.SignFlow.Domain.Entities.Envelopes.EnvelopeRoutingRule", "EnvelopeRoutingRule")
+                        .WithMany("Actions")
+                        .HasForeignKey("EnvelopeRoutingRuleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("LV.SignFlow.Domain.Entities.Envelopes.Recipients", "Recipient")
+                        .WithMany("RoutingActions")
+                        .HasForeignKey("RecipientId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("EnvelopeRoutingRule");
+
+                    b.Navigation("Recipient");
+                });
+
             modelBuilder.Entity("LV.SignFlow.Domain.Entities.Envelopes.EnvelopeRoutingCondition", b =>
                 {
                     b.HasOne("LV.SignFlow.Domain.Entities.Envelopes.EnvelopeRoutingRule", "EnvelopeRoutingRule")
@@ -2339,6 +2432,25 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.Navigation("TemplateVersion");
                 });
 
+            modelBuilder.Entity("LV.SignFlow.Domain.Entities.Templates.TemplateRoutingAction", b =>
+                {
+                    b.HasOne("LV.SignFlow.Domain.Entities.Templates.TemplateRecipientRole", "RecipientRole")
+                        .WithMany("RoutingActions")
+                        .HasForeignKey("RecipientRoleId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("LV.SignFlow.Domain.Entities.Templates.TemplateRoutingRule", "TemplateRoutingRule")
+                        .WithMany("Actions")
+                        .HasForeignKey("TemplateRoutingRuleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("RecipientRole");
+
+                    b.Navigation("TemplateRoutingRule");
+                });
+
             modelBuilder.Entity("LV.SignFlow.Domain.Entities.Templates.TemplateRoutingCondition", b =>
                 {
                     b.HasOne("LV.SignFlow.Domain.Entities.Templates.TemplateField", "SourceTemplateField")
@@ -2552,6 +2664,8 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("LV.SignFlow.Domain.Entities.Envelopes.EnvelopeRoutingRule", b =>
                 {
+                    b.Navigation("Actions");
+
                     b.Navigation("Conditions");
                 });
 
@@ -2574,6 +2688,8 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
                     b.Navigation("Events");
 
                     b.Navigation("Fields");
+
+                    b.Navigation("RoutingActions");
 
                     b.Navigation("Rules");
                 });
@@ -2618,6 +2734,8 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("LV.SignFlow.Domain.Entities.Templates.TemplateRecipientRole", b =>
                 {
+                    b.Navigation("RoutingActions");
+
                     b.Navigation("Rules");
 
                     b.Navigation("TemplateFields");
@@ -2625,6 +2743,8 @@ namespace LV.SignFlow.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("LV.SignFlow.Domain.Entities.Templates.TemplateRoutingRule", b =>
                 {
+                    b.Navigation("Actions");
+
                     b.Navigation("Conditions");
                 });
 

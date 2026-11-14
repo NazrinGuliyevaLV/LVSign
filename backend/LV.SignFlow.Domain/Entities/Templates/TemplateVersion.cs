@@ -14,6 +14,9 @@ namespace LV.SignFlow.Domain.Entities.Templates
         public bool IsPublished { get; set; }
         public DateTimeOffset CreatedAt { get; set; }
         public Guid CreatedByUserId { get; set; }
+        public int? ExpirationDays { get; set; }
+
+        public int? ReminderIntervalDays { get; set; }
 
         public Template Template { get; set; } = null!;
         public ICollection<TemplateDocument> Documents { get; set; } = new List<TemplateDocument>();

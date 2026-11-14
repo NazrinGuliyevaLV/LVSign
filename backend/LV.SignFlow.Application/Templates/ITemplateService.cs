@@ -46,10 +46,10 @@ namespace LV.SignFlow.Application.Templates
 
         //condition
 
-        Task<IReadOnlyList<TemplateRoutingConditionDto>> GetRoutingConditionsAsync(Guid templateId, Guid ruleId, Guid ruleSetId, CancellationToken cancellationToken = default);
-        Task<TemplateRoutingConditionDto> AddRoutingConditionsAsync(Guid templateId, Guid ruleId, Guid ruleSetId, TemplateRoutingConditionRequest request, CancellationToken cancellationToken = default);
-        Task<TemplateRoutingConditionDto> UpdateRoutingConditionsAsync(Guid templateId, Guid ruleId, Guid ruleSetId, Guid conditionId, TemplateRoutingConditionRequest request, CancellationToken cancellationToken = default);
-        Task DeleteRoutingConditionsAsync(Guid templateId, Guid ruleId, Guid ruleSetId, Guid conditionId,  CancellationToken cancellationToken = default);
+        Task<IReadOnlyList<TemplateRoutingConditionDto>> GetRoutingConditionsAsync(Guid templateId, Guid ruleSetId, Guid ruleId, CancellationToken cancellationToken = default);
+        Task<TemplateRoutingConditionDto> AddRoutingConditionsAsync(Guid templateId, Guid ruleSetId, Guid ruleId, TemplateRoutingConditionRequest request, CancellationToken cancellationToken = default);
+        Task<TemplateRoutingConditionDto> UpdateRoutingConditionsAsync(Guid templateId, Guid ruleSetId, Guid ruleId, Guid conditionId, TemplateRoutingConditionRequest request, CancellationToken cancellationToken = default);
+        Task DeleteRoutingConditionsAsync(Guid templateId, Guid ruleSetId, Guid ruleId, Guid conditionId,  CancellationToken cancellationToken = default);
 
         //share template
         Task<IReadOnlyList<TemplateShareDto>> GetSharesAsync(Guid templateId,CancellationToken cancellationToken = default);
@@ -60,7 +60,40 @@ namespace LV.SignFlow.Application.Templates
 
         Task<TemplateDetailsDto> PublishAsync(Guid templateId, CancellationToken cancellationToken = default);
         Task<TemplateDetailsDto> CreateNewVersionAsync(Guid templateId, CancellationToken cancellationToken = default);
+        Task ReorderRecipientRolesAsync(
+    Guid templateId,
+    ReorderTemplateRecipientRolesRequest request,
+    CancellationToken cancellationToken = default);
 
+        // Conditional routing actions
+
+        Task<IReadOnlyList<TemplateRoutingActionDto>> GetRoutingActionsAsync(
+            Guid templateId,
+            Guid ruleSetId,
+            Guid ruleId,
+            CancellationToken cancellationToken = default);
+
+        Task<TemplateRoutingActionDto> AddRoutingActionAsync(
+            Guid templateId,
+            Guid ruleSetId,
+            Guid ruleId,
+            TemplateRoutingActionRequest request,
+            CancellationToken cancellationToken = default);
+
+        Task<TemplateRoutingActionDto> UpdateRoutingActionAsync(
+    Guid templateId,
+    Guid ruleSetId,
+    Guid ruleId,
+    Guid actionId,
+    TemplateRoutingActionRequest request,
+    CancellationToken cancellationToken = default);
+
+        Task DeleteRoutingActionAsync(
+            Guid templateId,
+            Guid ruleSetId,
+            Guid ruleId,
+            Guid actionId,
+            CancellationToken cancellationToken = default);
 
     }
 }

@@ -14,6 +14,11 @@ namespace LV.SignFlow.Infrastructure.Persistence.Configurations
             builder.ToTable("TemplateFields");
 
             builder.HasKey(x => x.Id);
+            builder.Property(x => x.Label)
+    .HasMaxLength(200);
+
+            builder.Property(x => x.OptionJson)
+                .HasMaxLength(4000);
 
             builder.Property(x => x.X)
                 .HasPrecision(9, 6);

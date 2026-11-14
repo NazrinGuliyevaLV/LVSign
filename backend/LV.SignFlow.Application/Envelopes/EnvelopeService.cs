@@ -54,7 +54,7 @@ namespace LV.SignFlow.Application.Envelopes
         public IRepository<EnvelopeFieldValue> _envelopeFieldValue;
         public IRepository<EnvelopeAppliedSignature> _envelopeAppliedSignature;
         private readonly IRepository<EnvelopeFinalization> _envelopeFinalizationRepository;
-         
+
         private readonly IEnvelopeNotificationService _envelopeNotificationService;
 
         public EnvelopeService(ICurrentUser currentUser, IUnitOfWork unitOfWork, IFileStorage fileStorage, IRepository<Envelope> envelopeRepository, IRepository<Fields> envelopeField, IRepository<Recipients> envelopeRecipient, IRepository<Documents> envelopeDocument, IRepository<User> userRepository, IRepository<Events> eventRepository, IRepository<StatusHistory> statusHistoryRepository, IRepository<TemplateShare> templateShareRepository, IRepository<TemplateDocument> templateDocumentRepository, IRepository<TemplateField> templateFieldRepository, IRepository<TemplateRecipientRole> templateRecipientRoleRepository, IRepository<TemplateRoutingRule> templateRoutingRuleRepository, IRepository<TemplateRoutingRuleSet> templateRoutingRuleSetRepository, IRepository<EnvelopeRoutingRule> envelopeRoutingRuleRepository, IRepository<EnvelopeRoutingRuleSet> envelopeRoutingRuleSetRepository, IRepository<TemplateRoutingCondition> templateRoutingConditionRepository, IRepository<EnvelopeRoutingCondition> envelopeRoutingConditionRepository, ITemplateRepository templateRepository, IRepository<EnvelopeFieldValue> fieldValueRepository, IRepository<Signature> signatureRepository, IRepository<Stamps> stampRepository, IRepository<EnvelopeRoutingRule> envelopeRoutingRule, IRepository<EnvelopeRoutingRuleSet> envelopeRoutingRuleSet, IRepository<EnvelopeRoutingCondition> envelopeRoutingCondition, IRepository<EnvelopeAppliedSignature> appliedSignatureRepository, IRepository<EnvelopeFieldValue> envelopeFieldValue, IRepository<EnvelopeAppliedSignature> envelopeAppliedSignature, IRepository<EnvelopeFinalization> envelopeFinalizationRepository, IEnvelopeNotificationService envelopeNotificationService)
@@ -1766,7 +1766,10 @@ namespace LV.SignFlow.Application.Envelopes
                     Height = templateField.Height,
 
                     IsRequired =
-                    templateField.IsRequired
+                    templateField.IsRequired,
+
+                    Label = templateField.Label,
+                    OptionJson = templateField.OptionJson,
                 };
                 fieldMap[templateField.Id] = field.Id;
 
@@ -1897,6 +1900,41 @@ namespace LV.SignFlow.Application.Envelopes
                           envelopeCondition,
                           cancellationToken);
                     }
+
+                    //var templateActions =
+                    //    await _templateRoutingActionRepository.FindAsync(
+                    //        x => x.TemplateRoutingRuleId == templateRule.Id,
+                    //        cancellationToken);
+
+                    //foreach (var templateAction in templateActions.OrderBy(x => x.Order))
+                    //{
+                    //    if (!recipientMap.TryGetValue(
+                    //        templateAction.RecipientRoleId,
+                    //        out var recipientId))
+                    //    {
+                    //        throw new InvalidOperationException(
+                    //            $"Template routing action recipient " +
+                    //            $"'{templateAction.RecipientRoleId}' could not be mapped.");
+                    //    }
+
+                    //    var envelopeAction = new EnvelopeRoutingAction
+                    //    {
+                    //        Id = Guid.NewGuid(),
+
+                    //        EnvelopeRoutingRuleId = envelopeRule.Id,
+
+                    //        RecipientId = recipientId,
+
+                    //        ActionType = templateAction.ActionType,
+
+                    //        Order = templateAction.Order
+                    //    };
+
+                    //    await _envelopeRoutingActionRepository.AddAsync(
+                    //        envelopeAction,
+                    //        cancellationToken);
+                    //}
+
                 }
             }
         }
@@ -1979,7 +2017,16 @@ namespace LV.SignFlow.Application.Envelopes
 
                 UpdatedAt = now,
 
-                IsDeleted = false
+                IsDeleted = false,
+
+                ExpiresAt =
+    publishedVersion.ExpirationDays.HasValue
+        ? now.AddDays(
+            publishedVersion.ExpirationDays.Value)
+        : null,
+
+                ReminderIntervalDays =
+    publishedVersion.ReminderIntervalDays,
             };
 
             await _envelopeRepository.AddAsync(

@@ -1070,5 +1070,163 @@ namespace LV.SignFlow.Api.Controllers
                 return Forbid();
             }
         }
+
+        [HttpPut("{templateId:guid}/recipient-roles/order")]
+        public async Task<IActionResult> ReorderRecipientRoles(
+    Guid templateId,
+    ReorderTemplateRecipientRolesRequest request,
+    CancellationToken cancellationToken)
+        {
+            try
+            {
+                await templateService.ReorderRecipientRolesAsync(
+                    templateId,
+                    request,
+                    cancellationToken);
+
+                return NoContent();
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Conflict(ex.Message);
+            }
+        }
+
+
+        [HttpGet("{templateId:guid}/routing-rule-sets/{ruleSetId:guid}/rules/{ruleId:guid}/actions")]
+        public async Task<ActionResult<IReadOnlyList<TemplateRoutingActionDto>>>
+            GetRoutingActions(
+                Guid templateId,
+                Guid ruleSetId,
+                Guid ruleId,
+                CancellationToken cancellationToken)
+        {
+            try
+            {
+                var actions = await templateService.GetRoutingActionsAsync(
+                    templateId, ruleSetId, ruleId, cancellationToken);
+
+                return Ok(actions);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+        }
+
+        [HttpPost("{templateId:guid}/routing-rule-sets/{ruleSetId:guid}/rules/{ruleId:guid}/actions")]
+        public async Task<ActionResult<TemplateRoutingActionDto>>
+            AddRoutingAction(
+                Guid templateId,
+                Guid ruleSetId,
+                Guid ruleId,
+                TemplateRoutingActionRequest request,
+                CancellationToken cancellationToken)
+        {
+            try
+            {
+                var action = await templateService.AddRoutingActionAsync(
+                    templateId, ruleSetId, ruleId, request, cancellationToken);
+
+                return StatusCode(StatusCodes.Status201Created, action);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Conflict(ex.Message);
+            }
+        }
+
+
+        [HttpPut(
+            "{templateId:guid}/routing-rule-sets/{ruleSetId:guid}/rules/{ruleId:guid}/actions/{actionId:guid}")]
+        [ProducesResponseType(typeof(TemplateRoutingActionDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status409Conflict)]
+        public async Task<ActionResult<TemplateRoutingActionDto>>
+            UpdateRoutingAction(
+                Guid templateId,
+                Guid ruleSetId,
+                Guid ruleId,
+                Guid actionId,
+                TemplateRoutingActionRequest request,
+                CancellationToken cancellationToken)
+        {
+            try
+            {
+                var action = await templateService.UpdateRoutingActionAsync(
+                    templateId,
+                    ruleSetId,
+                    ruleId,
+                    actionId,
+                    request,
+                    cancellationToken);
+
+                return Ok(action);
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Conflict(ex.Message);
+            }
+        }
+
+        [HttpDelete(
+            "{templateId:guid}/routing-rule-sets/{ruleSetId:guid}/rules/{ruleId:guid}/actions/{actionId:guid}")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status409Conflict)]
+        public async Task<IActionResult> DeleteRoutingAction(
+            Guid templateId,
+            Guid ruleSetId,
+            Guid ruleId,
+            Guid actionId,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                await templateService.DeleteRoutingActionAsync(
+                    templateId,
+                    ruleSetId,
+                    ruleId,
+                    actionId,
+                    cancellationToken);
+
+                return NoContent();
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Conflict(ex.Message);
+            }
+        }
+
+
     }
 }

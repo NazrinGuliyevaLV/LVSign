@@ -10,5 +10,9 @@ namespace LV.SignFlow.Application.Templates.Requests
         public string Name { get; set; }=string.Empty;
         public string? Description { get; set; }
         public TemplateCategory? Category { get; set; }
+
+        public int? ExpirationDays { get; set; }
+
+        public int? ReminderIntervalDays { get; set; }
     }
 }

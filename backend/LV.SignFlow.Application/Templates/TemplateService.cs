@@ -8,7 +8,9 @@ using LV.SignFlow.Domain.Enums.TemplateEnums;
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Reflection.Emit;
 using System.Text;
+using System.Text.Json;
 using static LV.SignFlow.Domain.Authorization.PermissionCodes;
 
 namespace LV.SignFlow.Application.Templates
@@ -28,8 +30,8 @@ namespace LV.SignFlow.Application.Templates
         private readonly IRepository<TemplateShare> _templateShareRepository;
         private readonly IRepository<TemplateVersion> _templateVersionRepository;
         private readonly IRepository<User> _userRepository;
-
-        public TemplateService(ITemplateRepository templateRepository, ICurrentUser curentUser, IUnitOfWork unitOfWork, IFileStorage fileStorage, IRepository<TemplateRecipientRole> recipientRoleRepository, IRepository<TemplateDocument> templateDocumentRepository, IRepository<User> userRepository, IRepository<TemplateField> templateFieldRepository, IRepository<TemplateRoutingRuleSet> templateRoutingRuleSetRepository = null, IRepository<TemplateRoutingRule> templateRoutingRuleRepository = null, IRepository<TemplateRoutingCondition> templateRoutingConditionRepository = null, IRepository<TemplateShare> templateShareRepository = null, IRepository<TemplateVersion> templateVersionRepository = null)
+        private readonly IRepository<TemplateRoutingAction> _templateRoutingActionRepository;
+        public TemplateService(ITemplateRepository templateRepository, ICurrentUser curentUser, IUnitOfWork unitOfWork, IFileStorage fileStorage, IRepository<TemplateRecipientRole> recipientRoleRepository, IRepository<TemplateDocument> templateDocumentRepository, IRepository<User> userRepository, IRepository<TemplateField> templateFieldRepository, IRepository<TemplateRoutingRuleSet> templateRoutingRuleSetRepository = null, IRepository<TemplateRoutingRule> templateRoutingRuleRepository = null, IRepository<TemplateRoutingCondition> templateRoutingConditionRepository = null, IRepository<TemplateShare> templateShareRepository = null, IRepository<TemplateVersion> templateVersionRepository = null, IRepository<TemplateRoutingAction> templateRoutingActionRepository = null)
         {
             _templateRepository = templateRepository;
             _currentUser = curentUser;
@@ -44,6 +46,7 @@ namespace LV.SignFlow.Application.Templates
             _templateRoutingConditionRepository = templateRoutingConditionRepository;
             _templateShareRepository = templateShareRepository;
             _templateVersionRepository = templateVersionRepository;
+            _templateRoutingActionRepository = templateRoutingActionRepository;
         }
 
         private void EnsureAuthenticated()
@@ -61,6 +64,7 @@ namespace LV.SignFlow.Application.Templates
             {
                 throw new ArgumentException("Template name is required", nameof(request));
             }
+           
 
             var now = DateTimeOffset.UtcNow;
 
@@ -76,6 +80,7 @@ namespace LV.SignFlow.Application.Templates
                 IsDeleted = false,
                 CreatedAt = now,
                 UpdatedAt = now,
+
                
             };
             var version = new TemplateVersion
@@ -86,7 +91,9 @@ namespace LV.SignFlow.Application.Templates
                 Template = template,
                 CreatedAt = now,
                 IsPublished = false,
-                VersionNumber = 1
+                VersionNumber = 1,
+                ExpirationDays = request.ExpirationDays,
+                ReminderIntervalDays = request.ReminderIntervalDays
             };
 
             template.Versions.Add(version);
@@ -119,29 +126,39 @@ namespace LV.SignFlow.Application.Templates
                 .ToList();
         }
 
-        public async Task<TemplateDetailsDto?> GetByIdAsync(Guid Id, CancellationToken cancellationToken = default)
+
+        public async Task<TemplateDetailsDto?> GetByIdAsync(
+            Guid id,
+            CancellationToken cancellationToken = default)
         {
             EnsureAuthenticated();
-            var template = await _templateRepository.GetByIdForOrganizationAsync(Id, _currentUser.OrganizationId, cancellationToken);
+
+            var template =
+                await _templateRepository.GetByIdForOrganizationAsync(
+                    id,
+                    _currentUser.OrganizationId,
+                    cancellationToken);
+
             if (template is null)
-            {
                 return null;
+
+            var latestVersion = template.Versions
+                .OrderByDescending(x => x.VersionNumber)
+                .FirstOrDefault();
+
+            if (latestVersion is null)
+            {
+                throw new InvalidOperationException(
+                    "The template does not contain a version.");
             }
 
-            return new TemplateDetailsDto
-            {
-                Id = template.Id,
-                Name = template.Name,
-                Description = template.Description,
-                CreatedAt = template.CreatedAt,
-                UpdatedAt = template.UpdatedAt,
-                OwnerUserId = template.OwnerUserId,
-                Category= template.Category,
-                LatestVersionNumber = template.Versions.Count == 0 ? 0 :
-                template.Versions.Max(x => x.VersionNumber),
+            var dto = MapTemplateDetails(template, latestVersion);
 
-            };
+            dto.IsOwner = template.OwnerUserId == _currentUser.UserId;
+
+            return dto;
         }
+
 
         public async Task<IReadOnlyList<TemplateRecipientRoleDto>> GetRecipientRoleAsync(Guid templateId, CancellationToken cancellationToken = default)
         {
@@ -216,12 +233,12 @@ namespace LV.SignFlow.Application.Templates
                     x => x.TemplateVersionId == latestVersion.Id,
                     cancellationToken);
 
-            if (existingRoles.Any(
-                x => x.RoutingOrder == request.RoutingOrder))
-            {
-                throw new InvalidOperationException(
-                    "Another recipient already uses this routing order.");
-            }
+            //if (existingRoles.Any(
+            //    x => x.RoutingOrder == request.RoutingOrder))
+            //{
+            //    throw new InvalidOperationException(
+            //        "Another recipient already uses this routing order.");
+            //}
 
             if (request.DefaultUserId.HasValue)
             {
@@ -417,32 +434,54 @@ namespace LV.SignFlow.Application.Templates
                     Y = x.Y,
                     Width = x.Width,
                     Height = x.Height,
-                    IsRequired = x.IsRequired
+                    IsRequired = x.IsRequired,
+                    Label = x.Label,
+                    OwnerType=x.OwnerType,
+                    Options =
+    string.IsNullOrWhiteSpace(x.OptionJson)
+        ? null
+        : JsonSerializer.Deserialize<List<string>>(x.OptionJson),
                 })
                 .ToList();
         }
 
-        public async Task<TemplateFieldDto> AddFieldsAsync(Guid templateId,TemplateFieldRequest templateFieldRequest, CancellationToken cancellationToken = default)
+        public async Task<TemplateFieldDto> AddFieldsAsync(
+      Guid templateId,
+      TemplateFieldRequest templateFieldRequest,
+      CancellationToken cancellationToken = default)
         {
             EnsureAuthenticated();
 
-            if (templateFieldRequest.TemplateDocumentId == Guid.Empty) throw new ArgumentException("Template document is requied");
-            if (templateFieldRequest.PageNumber <=0) throw new ArgumentException("Page number must be greater than zero.");
+            if (templateFieldRequest.TemplateDocumentId == Guid.Empty)
+                throw new ArgumentException(
+                    "Template document is required.");
 
-            if (templateFieldRequest.OwnerType == FieldOwnerType.Recipient && !templateFieldRequest.RecipientRoleId.HasValue)
-                throw new ArgumentException( "Recipient role is required for recipient-owned fields.");
-            
+            if (templateFieldRequest.PageNumber <= 0)
+                throw new ArgumentException(
+                    "Page number must be greater than zero.");
 
-            if (templateFieldRequest.OwnerType != FieldOwnerType.Recipient &&  templateFieldRequest.RecipientRoleId.HasValue)
-                throw new ArgumentException("Only recipient-owned fields can have a recipient role.");
-           
+            if (templateFieldRequest.OwnerType == FieldOwnerType.Recipient &&
+                !templateFieldRequest.RecipientRoleId.HasValue)
+            {
+                throw new ArgumentException(
+                    "Recipient role is required for recipient-owned fields.");
+            }
 
-            ValidateNormalizedCoordinates(templateFieldRequest);
+            if (templateFieldRequest.OwnerType != FieldOwnerType.Recipient &&
+                templateFieldRequest.RecipientRoleId.HasValue)
+            {
+                throw new ArgumentException(
+                    "Only recipient-owned fields can have a recipient role.");
+            }
+
+            ValidateNormalizedCoordinates(
+                templateFieldRequest);
+
             var template =
-        await _templateRepository.GetByIdForOrganizationAsync(
-            templateId,
-            _currentUser.OrganizationId,
-            cancellationToken);
+                await _templateRepository.GetByIdForOrganizationAsync(
+                    templateId,
+                    _currentUser.OrganizationId,
+                    cancellationToken);
 
             if (template is null)
                 throw new KeyNotFoundException(
@@ -452,9 +491,10 @@ namespace LV.SignFlow.Application.Templates
                 throw new InvalidOperationException(
                     "Only draft templates can be modified.");
 
-            var latestVersion = template.Versions
-                .OrderByDescending(x => x.VersionNumber)
-                .FirstOrDefault();
+            var latestVersion =
+                template.Versions
+                    .OrderByDescending(x => x.VersionNumber)
+                    .FirstOrDefault();
 
             if (latestVersion is null)
                 throw new InvalidOperationException(
@@ -472,47 +512,79 @@ namespace LV.SignFlow.Application.Templates
                     "The selected document does not belong to this template version.");
             }
 
-            var recipientRole = await _recipientRoleRepository.GetByIdAsync(templateFieldRequest.RecipientRoleId, cancellationToken);
-            if (recipientRole is null || recipientRole.TemplateVersionId != latestVersion.Id)
+            TemplateRecipientRole? recipientRole = null;
+
+            if (templateFieldRequest.OwnerType ==
+                FieldOwnerType.Recipient)
             {
-                throw new ArgumentException(
-          "The selected recipient role does not belong to this template version.");
+                recipientRole =
+                    await _recipientRoleRepository.GetByIdAsync(
+                        templateFieldRequest.RecipientRoleId!.Value,
+                        cancellationToken);
+
+                if (recipientRole is null ||
+                    recipientRole.TemplateVersionId != latestVersion.Id)
+                {
+                    throw new ArgumentException(
+                        "The selected recipient role does not belong to this template version.");
+                }
             }
 
             if (document.PageCount.HasValue &&
-                templateFieldRequest.PageNumber > document.PageCount.Value)
+                templateFieldRequest.PageNumber >
+                document.PageCount.Value)
             {
                 throw new ArgumentException(
                     "The selected page does not exist in the document.");
             }
 
-            var field = new TemplateField
-            {
-                Id = Guid.NewGuid(),
+            var field =
+                new TemplateField
+                {
+                    Id = Guid.NewGuid(),
 
-                TemplateDocumentId =
-                    document.Id,
+                    TemplateDocumentId =
+                        document.Id,
 
-                RecipientRoleId =
-                    recipientRole.Id,
+                    RecipientRoleId =
+                        recipientRole?.Id,
 
-                FieldType =
-                    templateFieldRequest.FieldType,
+                    OwnerType =
+                        templateFieldRequest.OwnerType,
 
-                PageNumber =
-                    templateFieldRequest.PageNumber,
+                    FieldType =
+                        templateFieldRequest.FieldType,
 
-                X = templateFieldRequest.X,
+                    Label =
+                        string.IsNullOrWhiteSpace(
+                            templateFieldRequest.Label)
+                            ? null
+                            : templateFieldRequest.Label.Trim(),
 
-                Y = templateFieldRequest.Y,
+                    OptionJson =
+                        templateFieldRequest.Options is { Count: > 0 }
+                            ? JsonSerializer.Serialize(
+                                templateFieldRequest.Options)
+                            : null,
 
-                Width = templateFieldRequest.Width,
+                    PageNumber =
+                        templateFieldRequest.PageNumber,
 
-                Height = templateFieldRequest.Height,
+                    X =
+                        templateFieldRequest.X,
 
-                IsRequired =
-                    templateFieldRequest.IsRequired
-            };
+                    Y =
+                        templateFieldRequest.Y,
+
+                    Width =
+                        templateFieldRequest.Width,
+
+                    Height =
+                        templateFieldRequest.Height,
+
+                    IsRequired =
+                        templateFieldRequest.IsRequired
+                };
 
             await _templateFieldRepository.AddAsync(
                 field,
@@ -523,25 +595,49 @@ namespace LV.SignFlow.Application.Templates
 
             return new TemplateFieldDto
             {
-                Id = field.Id,
+                Id =
+                    field.Id,
+
                 TemplateDocumentId =
                     field.TemplateDocumentId,
+
                 RecipientRoleId =
                     field.RecipientRoleId,
+                 
+
                 FieldType =
                     field.FieldType,
+
+                Label =
+                    field.Label,
+
+                Options =
+                    string.IsNullOrWhiteSpace(
+                        field.OptionJson)
+                        ? null
+                        : JsonSerializer.Deserialize<List<string>>(
+                            field.OptionJson),
+
                 PageNumber =
                     field.PageNumber,
-                X = field.X,
-                Y = field.Y,
-                Width = field.Width,
-                Height = field.Height,
+
+                X =
+                    field.X,
+
+                Y =
+                    field.Y,
+
+                Width =
+                    field.Width,
+
+                Height =
+                    field.Height,
+
                 IsRequired =
-                    field.IsRequired
+                    field.IsRequired,
+                OwnerType = field.OwnerType,
             };
-
         }
-
         private static void ValidateNormalizedCoordinates(
     TemplateFieldRequest request)
         {
@@ -582,9 +678,19 @@ namespace LV.SignFlow.Application.Templates
                 throw new ArgumentException(
                     "Template document is required.");
 
-            if (request.RecipientRoleId == Guid.Empty)
+            if (request.OwnerType == FieldOwnerType.Recipient &&
+    !request.RecipientRoleId.HasValue)
+            {
                 throw new ArgumentException(
-                    "Recipient role is required.");
+                    "Recipient role is required for recipient-owned fields.");
+            }
+
+            if (request.OwnerType != FieldOwnerType.Recipient &&
+                request.RecipientRoleId.HasValue)
+            {
+                throw new ArgumentException(
+                    "Only recipient-owned fields can have a recipient role.");
+            }
 
             if (request.PageNumber <= 0)
                 throw new ArgumentException(
@@ -601,32 +707,39 @@ namespace LV.SignFlow.Application.Templates
             if (template is null) throw new KeyNotFoundException("Template was not found.");
 
 
-            var lastVersion = template.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
-            if (lastVersion is null) throw new InvalidOperationException("The template does not contain a version.");
+            var latestVersion = template.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
+            if (latestVersion is null) throw new InvalidOperationException("The template does not contain a version.");
 
-            var field = await _templateFieldRepository.GetByIdAsync(templateId, cancellationToken);
+            var field = await _templateFieldRepository.GetByIdAsync(fieldId, cancellationToken);
             if (field is null) throw new KeyNotFoundException("Template field was not found.");
 
             var currentDocument = await _templateDocumentRepository.GetByIdAsync(field.TemplateDocumentId, cancellationToken);
-            if (currentDocument is null || currentDocument.TemplateVersionId!=lastVersion.Id) throw new KeyNotFoundException("Template document was not found");
+            if (currentDocument is null || currentDocument.TemplateVersionId!=latestVersion.Id) throw new KeyNotFoundException("Template document was not found");
 
             var targetDocument = await _templateDocumentRepository.GetByIdAsync(field.TemplateDocumentId, cancellationToken);
-            if(targetDocument is null || targetDocument.TemplateVersionId != lastVersion.Id)
+            if(targetDocument is null || targetDocument.TemplateVersionId != latestVersion.Id)
             {
                 throw new ArgumentException(
         "The selected document does not belong to this template version.");
             }
-            var recipientRole =
-        await _recipientRoleRepository.GetByIdAsync(
-            request.RecipientRoleId,
-            cancellationToken);
+            TemplateRecipientRole? recipientRole = null;
 
-            if (recipientRole is null ||
-                recipientRole.TemplateVersionId != lastVersion.Id)
+            if (request.OwnerType == FieldOwnerType.Recipient)
             {
-                throw new ArgumentException(
-                    "The selected recipient role does not belong to this template version.");
+                recipientRole =
+                    await _recipientRoleRepository.GetByIdAsync(
+                        request.RecipientRoleId!.Value,
+                        cancellationToken);
+
+                if (recipientRole is null ||
+                    recipientRole.TemplateVersionId != latestVersion.Id)
+                {
+                    throw new ArgumentException(
+                        "The selected recipient role does not belong to this template version.");
+                }
             }
+
+
 
             if (targetDocument.PageCount.HasValue &&
                 request.PageNumber > targetDocument.PageCount.Value)
@@ -640,6 +753,7 @@ namespace LV.SignFlow.Application.Templates
 
             field.RecipientRoleId =
                 request.RecipientRoleId;
+            field.OwnerType = request.OwnerType;
 
             field.FieldType =
                 request.FieldType;
@@ -654,6 +768,15 @@ namespace LV.SignFlow.Application.Templates
 
             field.IsRequired =
                 request.IsRequired;
+            field.Label =
+    string.IsNullOrWhiteSpace(request.Label)
+        ? null
+        : request.Label.Trim();
+
+            field.OptionJson =
+                request.Options is { Count: > 0 }
+                    ? JsonSerializer.Serialize(request.Options)
+                    : null;
 
             _templateFieldRepository.Update(field);
 
@@ -667,6 +790,7 @@ namespace LV.SignFlow.Application.Templates
                     field.TemplateDocumentId,
                 RecipientRoleId =
                     field.RecipientRoleId,
+                OwnerType=field.OwnerType,
                 FieldType =
                     field.FieldType,
                 PageNumber =
@@ -676,7 +800,15 @@ namespace LV.SignFlow.Application.Templates
                 Width = field.Width,
                 Height = field.Height,
                 IsRequired =
-                    field.IsRequired
+                    field.IsRequired,
+                Label =
+        field.Label,
+
+                Options =
+        string.IsNullOrWhiteSpace(field.OptionJson)
+            ? null
+            : JsonSerializer.Deserialize<List<string>>(
+                field.OptionJson),
             };
         }
 
@@ -686,14 +818,14 @@ namespace LV.SignFlow.Application.Templates
             if (template is null) throw new KeyNotFoundException("Template was not found.");
 
 
-            var lastVersion = template.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
-            if (lastVersion is null) throw new InvalidOperationException("The template does not contain a version.");
+            var latestVersion = template.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
+            if (latestVersion is null) throw new InvalidOperationException("The template does not contain a version.");
 
-            var field = await _templateFieldRepository.GetByIdAsync(templateId, cancellationToken);
+            var field = await _templateFieldRepository.GetByIdAsync(fieldId, cancellationToken);
             if (field is null) throw new KeyNotFoundException("Template field was not found.");
 
             var currentDocument = await _templateDocumentRepository.GetByIdAsync(field.TemplateDocumentId, cancellationToken);
-            if (currentDocument is null || currentDocument.TemplateVersionId != lastVersion.Id) throw new KeyNotFoundException("Template document was not found");
+            if (currentDocument is null || currentDocument.TemplateVersionId != latestVersion.Id) throw new KeyNotFoundException("Template document was not found");
 
             _templateFieldRepository.Delete(field);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
@@ -764,11 +896,11 @@ namespace LV.SignFlow.Application.Templates
                         x.Id != roleId,
                     cancellationToken);
 
-            if (existingRoles.Any(x => x.RoutingOrder == request.RoutingOrder))
-            {
-                throw new InvalidOperationException(
-                    "Another recipient already uses this routing order.");
-            }
+            //if (existingRoles.Any(x => x.RoutingOrder == request.RoutingOrder))
+            //{
+            //    throw new InvalidOperationException(
+            //        "Another recipient already uses this routing order.");
+            //}
 
             if (request.DefaultUserId.HasValue)
             {
@@ -837,12 +969,12 @@ namespace LV.SignFlow.Application.Templates
             if (template is null) throw new KeyNotFoundException("Template was not found.");
 
 
-            var lastVersion = template.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
-            if (lastVersion is null) throw new InvalidOperationException("The template does not contain a version.");
+            var latestVersion = template.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
+            if (latestVersion is null) throw new InvalidOperationException("The template does not contain a version.");
             var recipientRole = await _recipientRoleRepository.GetByIdAsync(roleId, cancellationToken);
 
             if (recipientRole is null ||
-        recipientRole.TemplateVersionId != lastVersion.Id)
+        recipientRole.TemplateVersionId != latestVersion.Id)
             {
                 throw new KeyNotFoundException(
                     "Recipient role was not found.");
@@ -892,12 +1024,14 @@ namespace LV.SignFlow.Application.Templates
                 throw new KeyNotFoundException(
                     "Template was not found.");
 
-            var lastVersion=template.Versions.OrderDescending().FirstOrDefault();
-            if (lastVersion is null)
+            var latestVersion= template.Versions
+    .OrderByDescending(x => x.VersionNumber)
+    .FirstOrDefault();
+            if (latestVersion is null)
                 throw new InvalidOperationException(
                     "The template does not contain a version.");
 
-            var document = await _templateDocumentRepository.FindAsync(x => x.TemplateVersionId == lastVersion.Id);
+            var document = await _templateDocumentRepository.FindAsync(x => x.TemplateVersionId == latestVersion.Id);
             return document.OrderBy(x => x.Order).Select(x => new TemplateDocumentDto
             {
                 Id = x.Id,
@@ -918,14 +1052,16 @@ namespace LV.SignFlow.Application.Templates
                 throw new KeyNotFoundException(
                     "Template was not found.");
 
-            var lastVersion = template.Versions.OrderDescending().FirstOrDefault();
-            if (lastVersion is null)
+            var latestVersion = template.Versions
+    .OrderByDescending(x => x.VersionNumber)
+    .FirstOrDefault();
+            if (latestVersion is null)
                 throw new InvalidOperationException(
                     "The template does not contain a version.");
 
             var document = await _templateDocumentRepository.GetByIdAsync(documentId,cancellationToken);
             if (document is null ||
-      document.TemplateVersionId != lastVersion.Id)
+      document.TemplateVersionId != latestVersion.Id)
             {
                 throw new KeyNotFoundException(
                     "Template document was not found.");
@@ -949,14 +1085,14 @@ namespace LV.SignFlow.Application.Templates
                 throw new KeyNotFoundException(
                     "Template was not found.");
 
-            var lastVersion = template.Versions.OrderDescending().FirstOrDefault();
-            if (lastVersion is null)
+            var latestVersion = template.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
+            if (latestVersion is null)
                 throw new InvalidOperationException(
                     "The template does not contain a version.");
 
             var document = await _templateDocumentRepository.GetByIdAsync(documentId, cancellationToken);
             if (document is null ||
-      document.TemplateVersionId != lastVersion.Id)
+      document.TemplateVersionId != latestVersion.Id)
             {
                 throw new KeyNotFoundException(
                     "Template document was not found.");
@@ -992,11 +1128,11 @@ namespace LV.SignFlow.Application.Templates
                 throw new KeyNotFoundException(
                     "Template was not found.");
 
-            var lastVersion = template.Versions.OrderDescending().FirstOrDefault();
-            if (lastVersion is null)
+            var latestVersion = template.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
+            if (latestVersion is null)
                 throw new InvalidOperationException(
                     "The template does not contain a version.");
-            var route=await _templateRoutingRuleSetRepository.FindAsync(x=>x.TemplateVersionId==lastVersion.TemplateId, cancellationToken);
+            var route=await _templateRoutingRuleSetRepository.FindAsync(x=>x.TemplateVersionId==latestVersion.Id, cancellationToken);
             return route.OrderBy(x => x.CreatedAt).Select(x => new TemplateRoutingRuleSetDto
             {
                 Id = x.Id,
@@ -1022,14 +1158,14 @@ namespace LV.SignFlow.Application.Templates
                 throw new KeyNotFoundException(
                     "Template was not found.");
 
-            var lastVersion = template.Versions.OrderDescending().FirstOrDefault();
-            if (lastVersion is null)
+            var latestVersion = template.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
+            if (latestVersion is null)
                 throw new InvalidOperationException(
                     "The template does not contain a version.");
 
             var existingRuleSets =
                 await _templateRoutingRuleSetRepository.FindAsync(
-                    x => x.TemplateVersionId == lastVersion.Id,
+                    x => x.TemplateVersionId == latestVersion.Id,
                     cancellationToken);
 
             var normalizedName = request.Name.Trim();
@@ -1049,7 +1185,7 @@ namespace LV.SignFlow.Application.Templates
             {
                 Id = Guid.NewGuid(),
 
-                TemplateVersionId = lastVersion.Id,
+                TemplateVersionId = latestVersion.Id,
 
                 Name = normalizedName,
 
@@ -1088,14 +1224,14 @@ namespace LV.SignFlow.Application.Templates
                 throw new KeyNotFoundException(
                     "Template was not found.");
 
-            var lastVersion = template.Versions.OrderDescending().FirstOrDefault();
-            if (lastVersion is null)
+            var latestVersion = template.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
+            if (latestVersion is null)
                 throw new InvalidOperationException(
                     "The template does not contain a version.");
 
             var ruleSet = await _templateRoutingRuleSetRepository.GetByIdAsync(ruleSetId,cancellationToken);
 
-            if (ruleSet is null || ruleSet.TemplateVersionId != lastVersion.Id)  throw new KeyNotFoundException( "Routing rule set was not found.");
+            if (ruleSet is null || ruleSet.TemplateVersionId != latestVersion.Id)  throw new KeyNotFoundException( "Routing rule set was not found.");
            
 
             var rules =await _templateRoutingRuleRepository.FindAsync(x => x.TemplateRoutingRuleSetId == ruleSetId,cancellationToken);
@@ -1140,8 +1276,8 @@ namespace LV.SignFlow.Application.Templates
                 throw new KeyNotFoundException(
                     "Template was not found.");
 
-            var lastVersion = template.Versions.OrderDescending().FirstOrDefault();
-            if (lastVersion is null)
+            var latestVersion = template.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
+            if (latestVersion is null)
                 throw new InvalidOperationException(
                     "The template does not contain a version.");
 
@@ -1151,7 +1287,7 @@ namespace LV.SignFlow.Application.Templates
                     cancellationToken);
 
             if (ruleSet is null ||
-                ruleSet.TemplateVersionId != lastVersion.Id)
+                ruleSet.TemplateVersionId != latestVersion.Id)
             {
                 throw new KeyNotFoundException(
                     "Routing rule set was not found.");
@@ -1163,7 +1299,7 @@ namespace LV.SignFlow.Application.Templates
                     cancellationToken);
 
             if (targetRecipientRole is null ||
-                targetRecipientRole.TemplateVersionId != lastVersion.Id)
+                targetRecipientRole.TemplateVersionId != latestVersion.Id)
             {
                 throw new ArgumentException(
                     "The target recipient role does not belong to this template version.");
@@ -1228,7 +1364,7 @@ namespace LV.SignFlow.Application.Templates
             };
         }
 
-        public async Task<IReadOnlyList<TemplateRoutingConditionDto>> GetRoutingConditionsAsync(Guid templateId, Guid ruleId, Guid ruleSetId, CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<TemplateRoutingConditionDto>> GetRoutingConditionsAsync(Guid templateId, Guid ruleSetId, Guid ruleId, CancellationToken cancellationToken = default)
         {
             EnsureAuthenticated();
             var template = await _templateRepository.GetByIdForOrganizationAsync(templateId, _currentUser.OrganizationId, cancellationToken);
@@ -1236,13 +1372,13 @@ namespace LV.SignFlow.Application.Templates
                 throw new KeyNotFoundException(
                     "Template was not found.");
 
-            var lastVersion = template.Versions.OrderDescending().FirstOrDefault();
-            if (lastVersion is null)
+            var latestVersion = template.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
+            if (latestVersion is null)
                 throw new InvalidOperationException(
                     "The template does not contain a version.");
             var ruleSet = await _templateRoutingRuleSetRepository.GetByIdAsync( ruleSetId,cancellationToken);
 
-            if (ruleSet is null || ruleSet.TemplateVersionId != lastVersion.Id)
+            if (ruleSet is null || ruleSet.TemplateVersionId != latestVersion.Id)
             {
                 throw new KeyNotFoundException("Routing rule set was not found.");
             }
@@ -1265,17 +1401,17 @@ namespace LV.SignFlow.Application.Templates
             }).ToList();
         }
 
-        public async Task<TemplateRoutingConditionDto> AddRoutingConditionsAsync(Guid templateId, Guid ruleId, Guid ruleSetId, TemplateRoutingConditionRequest request, CancellationToken cancellationToken = default)
+        public async Task<TemplateRoutingConditionDto> AddRoutingConditionsAsync(Guid templateId, Guid ruleSetId, Guid ruleId, TemplateRoutingConditionRequest request, CancellationToken cancellationToken = default)
         {
             EnsureAuthenticated();
             var template = await _templateRepository.GetByIdForOrganizationAsync(templateId, _currentUser.OrganizationId, cancellationToken);
             if (template is null) throw new KeyNotFoundException( "Template was not found.");
 
-            var lastVersion = template.Versions.OrderDescending().FirstOrDefault();
-            if (lastVersion is null) throw new InvalidOperationException( "The template does not contain a version.");
+            var latestVersion = template.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
+            if (latestVersion is null) throw new InvalidOperationException( "The template does not contain a version.");
 
             var ruleSet = await _templateRoutingRuleSetRepository.GetByIdAsync(ruleSetId, cancellationToken);
-            if (ruleSet is null || ruleSet.TemplateVersionId != lastVersion.Id) throw new KeyNotFoundException("Routing rule set was not found.");
+            if (ruleSet is null || ruleSet.TemplateVersionId != latestVersion.Id) throw new KeyNotFoundException("Routing rule set was not found.");
            
 
             var rule = await _templateRoutingRuleRepository.GetByIdAsync(ruleId, cancellationToken);
@@ -1285,12 +1421,12 @@ namespace LV.SignFlow.Application.Templates
             if (sourceField is null)  throw new ArgumentException("The selected source field is invalid.");
 
             var sourceDocument=await _templateDocumentRepository.GetByIdAsync(sourceField.TemplateDocumentId, cancellationToken);
-            if (sourceDocument is null || sourceDocument.TemplateVersionId != lastVersion.Id) throw new ArgumentException("The selected source field does not belong to this template version.");
-      
+            if (sourceDocument is null || sourceDocument.TemplateVersionId != latestVersion.Id) throw new ArgumentException("The selected source field does not belong to this template version.");
+
 
             var condition = new TemplateRoutingCondition
             {
-                Id = new Guid(),
+                Id = Guid.NewGuid(),
                 TemplateRoutingRuleId = rule.Id,
                 SourceTemplateFieldId = sourceField.Id,
                 Operator = request.Operator,
@@ -1327,14 +1463,28 @@ namespace LV.SignFlow.Application.Templates
                 string.IsNullOrWhiteSpace(request.Description)
                     ? null
                     : request.Description.Trim();
+            template.Category = request.Category;
 
             template.UpdatedAt = DateTime.UtcNow;
             _templateRepository.Update(template);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
 
 
-            var latestVersion = template.Versions.OrderDescending().FirstOrDefault();
+            var latestVersion = template.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
             if (latestVersion is null) throw new InvalidOperationException("The template does not contain a version.");
+            if (latestVersion.IsPublished)
+            {
+                throw new InvalidOperationException(
+                    "Published template versions cannot be edited.");
+            }
+
+            latestVersion.ExpirationDays =
+                request.ExpirationDays;
+
+            latestVersion.ReminderIntervalDays =
+                request.ReminderIntervalDays;
+
+            _templateVersionRepository.Update(latestVersion);
             var latestPublishedVersionNumber =
         template.Versions
             .Where(x => x.IsPublished)
@@ -1367,7 +1517,12 @@ namespace LV.SignFlow.Application.Templates
 
                 CreatedAt = template.CreatedAt,
                 UpdatedAt = template.UpdatedAt,
-                Category = template.Category
+                Category = template.Category,
+                ExpirationDays =
+    latestVersion.ExpirationDays,
+
+                ReminderIntervalDays =
+    latestVersion.ReminderIntervalDays,
             };
 
 
@@ -1398,7 +1553,7 @@ namespace LV.SignFlow.Application.Templates
                 throw new KeyNotFoundException(
                     "Template was not found.");
 
-            var latestVersion = template.Versions.OrderDescending().FirstOrDefault();
+            var latestVersion = template.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
             if (latestVersion is null)
                 throw new InvalidOperationException(
                     "The template does not contain a version.");
@@ -1472,6 +1627,11 @@ namespace LV.SignFlow.Application.Templates
             if (latestVersion is null)
                 throw new InvalidOperationException(
                     "The template does not contain a version.");
+            if (latestVersion.IsPublished)
+            {
+                throw new InvalidOperationException(
+                    "Published template versions cannot be edited.");
+            }
 
             var ruleSet =
                 await _templateRoutingRuleSetRepository.GetByIdAsync(
@@ -1485,16 +1645,16 @@ namespace LV.SignFlow.Application.Templates
                     "Routing rule set was not found.");
             }
 
-            var rules =
-                await _templateRoutingRuleRepository.FindAsync(
-                    x => x.TemplateRoutingRuleSetId == ruleSetId,
-                    cancellationToken);
+            //var rules =
+            //    await _templateRoutingRuleRepository.FindAsync(
+            //        x => x.TemplateRoutingRuleSetId == ruleSetId,
+            //        cancellationToken);
 
-            if (rules.Count > 0)
-            {
-                throw new InvalidOperationException(
-                    "This routing rule set cannot be deleted because it contains routing rules.");
-            }
+            //if (rules.Count > 0)
+            //{
+            //    throw new InvalidOperationException(
+            //        "This routing rule set cannot be deleted because it contains routing rules.");
+            //}
 
             _templateRoutingRuleSetRepository.Delete(ruleSet);
 
@@ -1518,14 +1678,14 @@ namespace LV.SignFlow.Application.Templates
                 throw new KeyNotFoundException(
                     "Template was not found.");
 
-            var lastVersion = template.Versions.OrderDescending().FirstOrDefault();
-            if (lastVersion is null)
+            var latestVersion = template.Versions.OrderByDescending(x => x.VersionNumber).FirstOrDefault();
+            if (latestVersion is null)
                 throw new InvalidOperationException(
                     "The template does not contain a version.");
 
             var ruleSet = await _templateRoutingRuleSetRepository.GetByIdAsync(ruleSetId, cancellationToken);
 
-            if (ruleSet is null || ruleSet.TemplateVersionId != lastVersion.Id) throw new KeyNotFoundException("Routing rule set was not found.");
+            if (ruleSet is null || ruleSet.TemplateVersionId != latestVersion.Id) throw new KeyNotFoundException("Routing rule set was not found.");
 
 
             var rule = await _templateRoutingRuleRepository.GetByIdAsync(ruleId, cancellationToken);
@@ -1542,7 +1702,7 @@ namespace LV.SignFlow.Application.Templates
                     cancellationToken);
 
             if (recipientRole is null ||
-                recipientRole.TemplateVersionId != lastVersion.Id)
+                recipientRole.TemplateVersionId != latestVersion.Id)
             {
                 throw new ArgumentException(
                     "The target recipient role does not belong to this template version.");
@@ -1660,7 +1820,7 @@ namespace LV.SignFlow.Application.Templates
                 cancellationToken);
         }
 
-        public async Task<TemplateRoutingConditionDto> UpdateRoutingConditionsAsync(Guid templateId, Guid ruleId, Guid ruleSetId, Guid conditionId, TemplateRoutingConditionRequest request, CancellationToken cancellationToken = default)
+        public async Task<TemplateRoutingConditionDto> UpdateRoutingConditionsAsync(Guid templateId, Guid ruleSetId, Guid ruleId, Guid conditionId, TemplateRoutingConditionRequest request, CancellationToken cancellationToken = default)
         {
             var template =
         await _templateRepository.GetByIdForOrganizationAsync(
@@ -1771,7 +1931,7 @@ namespace LV.SignFlow.Application.Templates
             };
         }
 
-        public async Task DeleteRoutingConditionsAsync(Guid templateId, Guid ruleId, Guid ruleSetId, Guid conditionId, CancellationToken cancellationToken = default)
+        public async Task DeleteRoutingConditionsAsync(Guid templateId, Guid ruleSetId, Guid ruleId, Guid conditionId, CancellationToken cancellationToken = default)
         {
             EnsureAuthenticated();
 
@@ -1864,7 +2024,7 @@ namespace LV.SignFlow.Application.Templates
 
         private TemplateListItemDto MapTemplateListItem(Template template,Guid? departmentId)
         {
-            var lastVersion=template.Versions.OrderByDescending(x=>x.VersionNumber).First();
+            var latestVersion=template.Versions.OrderByDescending(x=>x.VersionNumber).First();
 
             var effectiveAccess = CalculateEffectiveAccessLevel(template, _currentUser.UserId, departmentId);
             if(!effectiveAccess.HasValue) throw new InvalidOperationException(
@@ -1876,9 +2036,9 @@ namespace LV.SignFlow.Application.Templates
                 Name = template.Name,
                 Description = template.Description,
                 Status = template.Status,
-                LatestVersionNumber =lastVersion.VersionNumber,
+                LatestVersionNumber =latestVersion.VersionNumber,
 
-                LatestVersionIsPublished =lastVersion.IsPublished,
+                LatestVersionIsPublished =latestVersion.IsPublished,
 
                 HasDraftVersion =
             template.Versions.Any(
@@ -1889,7 +2049,8 @@ namespace LV.SignFlow.Application.Templates
                 EffectiveAccessLevel =effectiveAccess.Value,
 
                 CreatedAt = template.CreatedAt,
-                UpdatedAt = template.UpdatedAt
+                UpdatedAt = template.UpdatedAt,
+                Category=template.Category,
             };
 
         }
@@ -2089,6 +2250,394 @@ namespace LV.SignFlow.Application.Templates
                 cancellationToken);
         }
 
+        private async Task ValidateTemplateRoutingForPublishAsync(
+            Guid templateVersionId,
+            CancellationToken cancellationToken)
+        {
+            var ruleSets =
+                await _templateRoutingRuleSetRepository.FindAsync(
+                    x => x.TemplateVersionId == templateVersionId &&
+                         x.IsActive,
+                    cancellationToken);
+
+            if (ruleSets.Count == 0)
+                return;
+
+            var versionRoles =
+                await _recipientRoleRepository.FindAsync(
+                    x => x.TemplateVersionId == templateVersionId,
+                    cancellationToken);
+
+            var roleIds = versionRoles
+                .Select(x => x.Id)
+                .ToHashSet();
+
+            var documents =
+                await _templateDocumentRepository.FindAsync(
+                    x => x.TemplateVersionId == templateVersionId,
+                    cancellationToken);
+
+            var documentIds = documents
+                .Select(x => x.Id)
+                .ToHashSet();
+
+            var fields =
+                await _templateFieldRepository.FindAsync(
+                    x => documentIds.Contains(x.TemplateDocumentId),
+                    cancellationToken);
+
+            var fieldIds = fields
+                .Select(x => x.Id)
+                .ToHashSet();
+
+            foreach (var ruleSet in ruleSets)
+            {
+                var allRules =
+                    await _templateRoutingRuleRepository.FindAsync(
+                        x => x.TemplateRoutingRuleSetId == ruleSet.Id,
+                        cancellationToken);
+
+                var rules = allRules
+                    .Where(x => x.IsActive)
+                    .ToList();
+
+                if (rules.Count == 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Routing rule set '{ruleSet.Name}' has no active rules.");
+                }
+
+                if (rules.Select(x => x.Priority).Distinct().Count()
+                    != rules.Count)
+                {
+                    throw new InvalidOperationException(
+                        $"Routing rule set '{ruleSet.Name}' has duplicate priorities.");
+                }
+
+                foreach (var rule in rules)
+                {
+                    if (!roleIds.Contains(rule.TargetRecipientRoleId))
+                    {
+                        throw new InvalidOperationException(
+                            $"Routing rule '{rule.Name}' has an invalid target recipient.");
+                    }
+
+                    if (rule.Priority <= 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"Routing rule '{rule.Name}' has an invalid priority.");
+                    }
+
+                    var conditions =
+                        await _templateRoutingConditionRepository.FindAsync(
+                            x => x.TemplateRoutingRuleId == rule.Id,
+                            cancellationToken);
+
+                    if (conditions.Count == 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"Routing rule '{rule.Name}' has no conditions.");
+                    }
+
+                    foreach (var condition in conditions)
+                    {
+                        if (!fieldIds.Contains(condition.SourceTemplateFieldId))
+                        {
+                            throw new InvalidOperationException(
+                                $"Routing rule '{rule.Name}' references an invalid field.");
+                        }
+
+                        if (!Enum.IsDefined(condition.Operator))
+                        {
+                            throw new InvalidOperationException(
+                                $"Routing rule '{rule.Name}' has an invalid operator.");
+                        }
+
+                        var requiresValue =
+                            condition.Operator != ConditionOperator.IsEmpty &&
+                            condition.Operator != ConditionOperator.IsNotEmpty;
+
+                        if (requiresValue &&
+                            string.IsNullOrWhiteSpace(condition.ComparisonValue))
+                        {
+                            throw new InvalidOperationException(
+                                $"Routing rule '{rule.Name}' has a missing comparison value.");
+                        }
+                    }
+
+                    var actions =
+                        await _templateRoutingActionRepository.FindAsync(
+                            x => x.TemplateRoutingRuleId == rule.Id,
+                            cancellationToken);
+
+                    if (actions.Count == 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"Routing rule '{rule.Name}' has no recipient actions.");
+                    }
+
+                    if (actions.Any(x => !roleIds.Contains(x.RecipientRoleId)))
+                    {
+                        throw new InvalidOperationException(
+                            $"Routing rule '{rule.Name}' references an invalid action recipient.");
+                    }
+
+                    if (actions.Any(x =>
+                            x.Order <= 0 ||
+                            !Enum.IsDefined(x.ActionType)))
+                    {
+                        throw new InvalidOperationException(
+                            $"Routing rule '{rule.Name}' has invalid action settings.");
+                    }
+
+                    if (actions.Select(x => x.RecipientRoleId).Distinct().Count()
+                        != actions.Count)
+                    {
+                        throw new InvalidOperationException(
+                            $"Routing rule '{rule.Name}' contains duplicate recipient actions.");
+                    }
+
+                    if (actions.Select(x => x.Order).Distinct().Count()
+                        != actions.Count)
+                    {
+                        throw new InvalidOperationException(
+                            $"Routing rule '{rule.Name}' contains duplicate action orders.");
+                    }
+                }
+            }
+        }
+
+
+        private static bool IsRoutingOperatorAllowed(
+            FieldType fieldType,
+            ConditionOperator op)
+        {
+            return fieldType switch
+            {
+                FieldType.Number =>
+                    op is
+                        ConditionOperator.Equals or
+                        ConditionOperator.NotEquals or
+                        ConditionOperator.IsEmpty or
+                        ConditionOperator.IsNotEmpty or
+                        ConditionOperator.GreaterThan or
+                        ConditionOperator.GreaterThanOrEqual or
+                        ConditionOperator.LessThan or
+                        ConditionOperator.LessThanOrEqual,
+
+                FieldType.Text =>
+                    op is
+                        ConditionOperator.Equals or
+                        ConditionOperator.NotEquals or
+                        ConditionOperator.Contains or
+                        ConditionOperator.DoesNotContain or
+                        ConditionOperator.IsEmpty or
+                        ConditionOperator.IsNotEmpty,
+
+                _ => false
+            };
+        }
+
+        private static ConditionOperator GetInverseOperator(
+            ConditionOperator op)
+        {
+            return op switch
+            {
+                ConditionOperator.Equals =>
+                    ConditionOperator.NotEquals,
+
+                ConditionOperator.NotEquals =>
+                    ConditionOperator.Equals,
+
+                ConditionOperator.Contains =>
+                    ConditionOperator.DoesNotContain,
+
+                ConditionOperator.DoesNotContain =>
+                    ConditionOperator.Contains,
+
+                ConditionOperator.IsEmpty =>
+                    ConditionOperator.IsNotEmpty,
+
+                ConditionOperator.IsNotEmpty =>
+                    ConditionOperator.IsEmpty,
+
+                ConditionOperator.GreaterThan =>
+                    ConditionOperator.LessThanOrEqual,
+
+                ConditionOperator.GreaterThanOrEqual =>
+                    ConditionOperator.LessThan,
+
+                ConditionOperator.LessThan =>
+                    ConditionOperator.GreaterThanOrEqual,
+
+                ConditionOperator.LessThanOrEqual =>
+                    ConditionOperator.GreaterThan,
+
+                _ => throw new InvalidOperationException(
+                    "Unsupported routing operator.")
+            };
+        }
+
+
+        private async Task ValidateFieldRoutingBranchesAsync(
+            Guid templateVersionId,
+            CancellationToken cancellationToken)
+        {
+            const string prefix = "Field routing: ";
+
+            var ruleSets =
+                await _templateRoutingRuleSetRepository.FindAsync(
+                    x => x.TemplateVersionId == templateVersionId,
+                    cancellationToken);
+
+            var documents =
+                await _templateDocumentRepository.FindAsync(
+                    x => x.TemplateVersionId == templateVersionId,
+                    cancellationToken);
+
+            var documentIds = documents.Select(x => x.Id).ToHashSet();
+
+            var fields =
+                await _templateFieldRepository.FindAsync(
+                    x => documentIds.Contains(x.TemplateDocumentId),
+                    cancellationToken);
+
+            var fieldsById = fields.ToDictionary(x => x.Id);
+
+            var roles =
+                await _recipientRoleRepository.FindAsync(
+                    x => x.TemplateVersionId == templateVersionId,
+                    cancellationToken);
+
+            var roleIds = roles.Select(x => x.Id).ToHashSet();
+
+            foreach (var ruleSet in ruleSets.Where(
+                x => x.IsActive && x.Name.StartsWith(
+                    prefix, StringComparison.Ordinal)))
+            {
+                if (!Guid.TryParse(
+                        ruleSet.Name[prefix.Length..],
+                        out var sourceFieldId) ||
+                    !fieldsById.TryGetValue(sourceFieldId, out var sourceField))
+                {
+                    throw new InvalidOperationException(
+                        $"Routing rule set '{ruleSet.Name}' has an invalid source field.");
+                }
+
+                var rules =
+                    await _templateRoutingRuleRepository.FindAsync(
+                        x => x.TemplateRoutingRuleSetId == ruleSet.Id,
+                        cancellationToken);
+
+                if (rules.Count != 2 ||
+                    rules.Any(x => !x.IsActive) ||
+                    rules.Count(x => x.Priority == 1) != 1 ||
+                    rules.Count(x => x.Priority == 2) != 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Routing '{ruleSet.Name}' must contain exactly two active branches.");
+                }
+
+                var thenRule = rules.Single(x => x.Priority == 1);
+                var elseRule = rules.Single(x => x.Priority == 2);
+
+                var thenConditions =
+                    await _templateRoutingConditionRepository.FindAsync(
+                        x => x.TemplateRoutingRuleId == thenRule.Id,
+                        cancellationToken);
+
+                var elseConditions =
+                    await _templateRoutingConditionRepository.FindAsync(
+                        x => x.TemplateRoutingRuleId == elseRule.Id,
+                        cancellationToken);
+
+                if (thenConditions.Count != 1 || elseConditions.Count != 1)
+                {
+                    throw new InvalidOperationException(
+                        "IF and ELSE must each contain exactly one condition.");
+                }
+
+                var ifCondition = thenConditions.Single();
+                var elseCondition = elseConditions.Single();
+
+                if (ifCondition.SourceTemplateFieldId != sourceFieldId ||
+                    elseCondition.SourceTemplateFieldId != sourceFieldId)
+                {
+                    throw new InvalidOperationException(
+                        "IF and ELSE must reference the configured source field.");
+                }
+
+                if (!IsRoutingOperatorAllowed(
+                        sourceField.FieldType, ifCondition.Operator) ||
+                    !IsRoutingOperatorAllowed(
+                        sourceField.FieldType, elseCondition.Operator))
+                {
+                    throw new InvalidOperationException(
+                        "Routing operator is not supported for the selected field type.");
+                }
+
+                if (elseCondition.Operator !=
+                    GetInverseOperator(ifCondition.Operator))
+                {
+                    throw new InvalidOperationException(
+                        "ELSE condition must be the inverse of IF.");
+                }
+
+                var isEmptyOperator =
+                    ifCondition.Operator is
+                        ConditionOperator.IsEmpty or
+                        ConditionOperator.IsNotEmpty;
+
+                if (!isEmptyOperator &&
+                    !string.Equals(
+                        ifCondition.ComparisonValue,
+                        elseCondition.ComparisonValue,
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        "IF and ELSE must use the same comparison value.");
+                }
+
+                if (sourceField.FieldType == FieldType.Number &&
+                    !isEmptyOperator &&
+                    !decimal.TryParse(
+                        ifCondition.ComparisonValue,
+                        System.Globalization.NumberStyles.Number,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out _))
+                {
+                    throw new InvalidOperationException(
+                        "Number routing requires a valid numeric comparison value.");
+                }
+
+                foreach (var rule in new[] { thenRule, elseRule })
+                {
+                    var actions =
+                        await _templateRoutingActionRepository.FindAsync(
+                            x => x.TemplateRoutingRuleId == rule.Id,
+                            cancellationToken);
+
+                    var actionRoleIds =
+                        actions.Select(x => x.RecipientRoleId).ToHashSet();
+
+                    if (actions.Count != roleIds.Count ||
+                        !actionRoleIds.SetEquals(roleIds))
+                    {
+                        throw new InvalidOperationException(
+                            $"Routing branch '{rule.Name}' must define one action for every recipient.");
+                    }
+
+                    if (actions.All(x =>
+                        x.ActionType == TemplateRoutingActionType.SkipRecipient))
+                    {
+                        throw new InvalidOperationException(
+                            $"Routing branch '{rule.Name}' cannot skip every recipient.");
+                    }
+                }
+            }
+        }
+
+
         public async Task<TemplateDetailsDto> PublishAsync(
     Guid templateId,
     CancellationToken cancellationToken = default)
@@ -2127,7 +2676,7 @@ namespace LV.SignFlow.Application.Templates
             if (latestVersion.IsPublished)
             {
                 throw new InvalidOperationException(
-                    "The latest template version is already published.");
+                    "Published template versions cannot be edited.");
             }
 
             var documents =
@@ -2165,7 +2714,15 @@ namespace LV.SignFlow.Application.Templates
                 throw new InvalidOperationException(
                     "All recipient roles must have a valid routing order.");
             }
+           
 
+            await ValidateTemplateRoutingForPublishAsync(
+    latestVersion.Id,
+    cancellationToken);
+
+            await ValidateFieldRoutingBranchesAsync(
+                latestVersion.Id,
+                cancellationToken);
             latestVersion.IsPublished = true;
 
             _templateVersionRepository.Update(
@@ -2250,7 +2807,7 @@ namespace LV.SignFlow.Application.Templates
                 UpdatedAt =
                     template.UpdatedAt,
 
-                IsOwner = true
+               // IsOwner = true
             };
         }
 
@@ -2296,8 +2853,7 @@ namespace LV.SignFlow.Application.Templates
             var sourceVersion =
                 template.Versions
                     .Where(x => x.IsPublished)
-                    .OrderByDescending(
-                        x => x.VersionNumber)
+                    .OrderByDescending(x => x.VersionNumber)
                     .FirstOrDefault();
 
             if (sourceVersion is null)
@@ -2324,7 +2880,13 @@ namespace LV.SignFlow.Application.Templates
                         DateTimeOffset.UtcNow,
 
                     CreatedByUserId =
-                        _currentUser.UserId
+                        _currentUser.UserId,
+
+                    ExpirationDays =
+    sourceVersion.ExpirationDays,
+
+                    ReminderIntervalDays =
+    sourceVersion.ReminderIntervalDays,
                 };
 
             /*
@@ -2576,7 +3138,9 @@ namespace LV.SignFlow.Application.Templates
                                 sourceField.Height,
 
                             IsRequired =
-                                sourceField.IsRequired
+                                sourceField.IsRequired,
+                            Label = sourceField.Label,
+                            OptionJson = sourceField.OptionJson,
                         };
 
                     await _templateFieldRepository.AddAsync(
@@ -2612,8 +3176,22 @@ namespace LV.SignFlow.Application.Templates
                             TemplateVersionId =
                                 newVersion.Id,
 
-                            Name =
-                                sourceRuleSet.Name,
+
+                            Name = sourceRuleSet.Name.StartsWith(
+    "Field routing: ",
+    StringComparison.Ordinal)
+    ? fieldIdMap.TryGetValue(
+        sourceRuleSet.Name["Field routing: ".Length..]
+            is var fieldIdText &&
+        Guid.TryParse(fieldIdText, out var oldFieldId)
+            ? oldFieldId
+            : Guid.Empty,
+        out var newFieldId)
+        ? $"Field routing: {newFieldId}"
+        : throw new InvalidOperationException(
+            "Routing rule set references an invalid field.")
+    : sourceRuleSet.Name,
+
 
                             IsActive =
                                 sourceRuleSet.IsActive,
@@ -2757,6 +3335,47 @@ namespace LV.SignFlow.Application.Templates
                         cancellationToken);
                 }
 
+                // 7. Routing Actions
+                var sourceActions = sourceRuleIds.Count == 0
+                    ? Array.Empty<TemplateRoutingAction>()
+                    : await _templateRoutingActionRepository.FindAsync(
+                        x => sourceRuleIds.Contains(x.TemplateRoutingRuleId),
+                        cancellationToken);
+
+                foreach (var sourceAction in sourceActions)
+                {
+                    if (!ruleIdMap.TryGetValue(
+                        sourceAction.TemplateRoutingRuleId,
+                        out var mappedRuleId))
+                    {
+                        throw new InvalidOperationException(
+                            "A routing action references an invalid rule.");
+                    }
+
+                    if (!roleIdMap.TryGetValue(
+                        sourceAction.RecipientRoleId,
+                        out var mappedRecipientRoleId))
+                    {
+                        throw new InvalidOperationException(
+                            "A routing action references an invalid recipient role.");
+                    }
+
+                    await _templateRoutingActionRepository.AddAsync(
+                        new TemplateRoutingAction
+                        {
+                            Id = Guid.NewGuid(),
+
+                            TemplateRoutingRuleId = mappedRuleId,
+
+                            RecipientRoleId = mappedRecipientRoleId,
+
+                            ActionType = sourceAction.ActionType,
+
+                            Order = sourceAction.Order
+                        },
+                        cancellationToken);
+                }
+
                 template.Status =
                     TemplateStatus.Draft;
 
@@ -2796,5 +3415,372 @@ namespace LV.SignFlow.Application.Templates
                 throw;
             }
         }
+
+        public async Task ReorderRecipientRolesAsync(
+    Guid templateId,
+    ReorderTemplateRecipientRolesRequest request,
+    CancellationToken cancellationToken = default)
+        {
+            EnsureAuthenticated();
+
+            var template =
+                await _templateRepository.GetByIdForOrganizationAsync(
+                    templateId,
+                    _currentUser.OrganizationId,
+                    cancellationToken);
+
+            if (template is null)
+                throw new KeyNotFoundException(
+                    "Template was not found.");
+
+            var latestVersion =
+                template.Versions
+                    .OrderByDescending(x => x.VersionNumber)
+                    .FirstOrDefault();
+
+            if (latestVersion is null)
+                throw new InvalidOperationException(
+                    "Template version was not found.");
+
+            if (latestVersion.IsPublished)
+                throw new InvalidOperationException(
+                    "Published template versions cannot be edited.");
+
+            var roles =
+                await _recipientRoleRepository.FindAsync(
+                    x => x.TemplateVersionId == latestVersion.Id,
+                    cancellationToken);
+
+            if (request.RoleIds.Count != roles.Count)
+                throw new ArgumentException(
+                    "All recipient roles must be supplied.");
+
+            if (request.RoleIds.Distinct().Count()
+                != request.RoleIds.Count)
+                throw new ArgumentException(
+                    "Recipient role ids must be unique.");
+
+            var roleMap =
+                roles.ToDictionary(x => x.Id);
+
+            for (var i = 0; i < request.RoleIds.Count; i++)
+            {
+                var roleId = request.RoleIds[i];
+
+                if (!roleMap.TryGetValue(roleId, out var role))
+                    throw new ArgumentException(
+                        "Invalid recipient role.");
+
+                role.RoutingOrder = i + 1;
+
+                _recipientRoleRepository.Update(role);
+            }
+
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+
+
+        public async Task<IReadOnlyList<TemplateRoutingActionDto>>
+            GetRoutingActionsAsync(
+                Guid templateId,
+                Guid ruleSetId,
+                Guid ruleId,
+                CancellationToken cancellationToken = default)
+        {
+            EnsureAuthenticated();
+
+            var template =
+                await _templateRepository.GetByIdForOrganizationAsync(
+                    templateId,
+                    _currentUser.OrganizationId,
+                    cancellationToken);
+
+            if (template is null)
+                throw new KeyNotFoundException("Template was not found.");
+
+            var version = template.Versions
+                .OrderByDescending(x => x.VersionNumber)
+                .FirstOrDefault();
+
+            if (version is null)
+                throw new KeyNotFoundException("Template version was not found.");
+
+            var ruleSet = await _templateRoutingRuleSetRepository.GetByIdAsync(
+                ruleSetId, cancellationToken);
+
+            if (ruleSet is null || ruleSet.TemplateVersionId != version.Id)
+                throw new KeyNotFoundException("Routing rule set was not found.");
+
+            var rule = await _templateRoutingRuleRepository.GetByIdAsync(
+                ruleId, cancellationToken);
+
+            if (rule is null || rule.TemplateRoutingRuleSetId != ruleSet.Id)
+                throw new KeyNotFoundException("Routing rule was not found.");
+
+            var actions = await _templateRoutingActionRepository.FindAsync(
+                x => x.TemplateRoutingRuleId == ruleId,
+                cancellationToken);
+
+            return actions
+                .OrderBy(x => x.Order)
+                .Select(x => new TemplateRoutingActionDto
+                {
+                    Id = x.Id,
+                    TemplateRoutingRuleId = x.TemplateRoutingRuleId,
+                    RecipientRoleId = x.RecipientRoleId,
+                    ActionType = x.ActionType,
+                    Order = x.Order
+                })
+                .ToList();
+        }
+
+        public async Task<TemplateRoutingActionDto> AddRoutingActionAsync(
+            Guid templateId,
+            Guid ruleSetId,
+            Guid ruleId,
+            TemplateRoutingActionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            EnsureAuthenticated();
+
+            if (!Enum.IsDefined(typeof(TemplateRoutingActionType), request.ActionType))
+                throw new ArgumentException("Invalid routing action type.");
+
+            if (request.RecipientRoleId == Guid.Empty)
+                throw new ArgumentException("Recipient role is required.");
+
+            if (request.Order <= 0)
+                throw new ArgumentException("Action order must be greater than zero.");
+
+            var template =
+                await _templateRepository.GetByIdForOrganizationAsync(
+                    templateId,
+                    _currentUser.OrganizationId,
+                    cancellationToken);
+
+            if (template is null)
+                throw new KeyNotFoundException("Template was not found.");
+
+            var version = template.Versions
+                .OrderByDescending(x => x.VersionNumber)
+                .FirstOrDefault();
+
+            if (version is null)
+                throw new InvalidOperationException(
+                    "The template does not contain a version.");
+
+            if (template.Status != TemplateStatus.Draft || version.IsPublished)
+                throw new InvalidOperationException(
+                    "Only a draft template version can be modified.");
+
+            var ruleSet = await _templateRoutingRuleSetRepository.GetByIdAsync(
+                ruleSetId, cancellationToken);
+
+            if (ruleSet is null || ruleSet.TemplateVersionId != version.Id)
+                throw new KeyNotFoundException("Routing rule set was not found.");
+
+            var rule = await _templateRoutingRuleRepository.GetByIdAsync(
+                ruleId, cancellationToken);
+
+            if (rule is null || rule.TemplateRoutingRuleSetId != ruleSet.Id)
+                throw new KeyNotFoundException("Routing rule was not found.");
+
+            var role = await _recipientRoleRepository.GetByIdAsync(
+                request.RecipientRoleId, cancellationToken);
+
+            if (role is null || role.TemplateVersionId != version.Id)
+                throw new ArgumentException(
+                    "Recipient role does not belong to this template version.");
+
+            var existingActions =
+                await _templateRoutingActionRepository.FindAsync(
+                    x => x.TemplateRoutingRuleId == ruleId,
+                    cancellationToken);
+
+            if (existingActions.Any(x => x.Order == request.Order))
+                throw new InvalidOperationException(
+                    "An action already uses this order.");
+
+            if (existingActions.Any(x => x.RecipientRoleId == request.RecipientRoleId))
+                throw new InvalidOperationException(
+                    "This rule already has an action for the selected recipient.");
+
+            var action = new TemplateRoutingAction
+            {
+                Id = Guid.NewGuid(),
+                TemplateRoutingRuleId = rule.Id,
+                RecipientRoleId = role.Id,
+                ActionType = request.ActionType,
+                Order = request.Order
+            };
+
+            await _templateRoutingActionRepository.AddAsync(
+                action, cancellationToken);
+
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            return new TemplateRoutingActionDto
+            {
+                Id = action.Id,
+                TemplateRoutingRuleId = action.TemplateRoutingRuleId,
+                RecipientRoleId = action.RecipientRoleId,
+                ActionType = action.ActionType,
+                Order = action.Order
+            };
+        }
+
+        public async Task<TemplateRoutingActionDto> UpdateRoutingActionAsync(
+            Guid templateId,
+            Guid ruleSetId,
+            Guid ruleId,
+            Guid actionId,
+            TemplateRoutingActionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            EnsureAuthenticated();
+
+            if (!Enum.IsDefined(typeof(TemplateRoutingActionType), request.ActionType))
+                throw new ArgumentException("Invalid routing action type.");
+
+            if (request.RecipientRoleId == Guid.Empty)
+                throw new ArgumentException("Recipient role is required.");
+
+            if (request.Order <= 0)
+                throw new ArgumentException("Action order must be greater than zero.");
+
+            var template =
+                await _templateRepository.GetByIdForOrganizationAsync(
+                    templateId,
+                    _currentUser.OrganizationId,
+                    cancellationToken);
+
+            if (template is null)
+                throw new KeyNotFoundException("Template was not found.");
+
+            var version = template.Versions
+                .OrderByDescending(x => x.VersionNumber)
+                .FirstOrDefault();
+
+            if (version is null)
+                throw new InvalidOperationException(
+                    "The template does not contain a version.");
+
+            if (template.Status != TemplateStatus.Draft || version.IsPublished)
+                throw new InvalidOperationException(
+                    "Only a draft template version can be modified.");
+
+            var ruleSet = await _templateRoutingRuleSetRepository.GetByIdAsync(
+                ruleSetId, cancellationToken);
+
+            if (ruleSet is null || ruleSet.TemplateVersionId != version.Id)
+                throw new KeyNotFoundException("Routing rule set was not found.");
+
+            var rule = await _templateRoutingRuleRepository.GetByIdAsync(
+                ruleId, cancellationToken);
+
+            if (rule is null || rule.TemplateRoutingRuleSetId != ruleSetId)
+                throw new KeyNotFoundException("Routing rule was not found.");
+
+            var action = await _templateRoutingActionRepository.GetByIdAsync(
+                actionId, cancellationToken);
+
+            if (action is null || action.TemplateRoutingRuleId != ruleId)
+                throw new KeyNotFoundException("Routing action was not found.");
+
+            var recipientRole = await _recipientRoleRepository.GetByIdAsync(
+                request.RecipientRoleId, cancellationToken);
+
+            if (recipientRole is null ||
+                recipientRole.TemplateVersionId != version.Id)
+            {
+                throw new ArgumentException(
+                    "Recipient role does not belong to this template version.");
+            }
+
+            var otherActions = await _templateRoutingActionRepository.FindAsync(
+                x => x.TemplateRoutingRuleId == ruleId && x.Id != actionId,
+                cancellationToken);
+
+            if (otherActions.Any(x => x.Order == request.Order))
+                throw new InvalidOperationException(
+                    "Another action already uses this order.");
+
+            if (otherActions.Any(x => x.RecipientRoleId == request.RecipientRoleId))
+                throw new InvalidOperationException(
+                    "This rule already has an action for the selected recipient.");
+
+            action.RecipientRoleId = request.RecipientRoleId;
+            action.ActionType = request.ActionType;
+            action.Order = request.Order;
+
+            _templateRoutingActionRepository.Update(action);
+
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            return new TemplateRoutingActionDto
+            {
+                Id = action.Id,
+                TemplateRoutingRuleId = action.TemplateRoutingRuleId,
+                RecipientRoleId = action.RecipientRoleId,
+                ActionType = action.ActionType,
+                Order = action.Order
+            };
+        }
+
+
+        public async Task DeleteRoutingActionAsync(
+            Guid templateId,
+            Guid ruleSetId,
+            Guid ruleId,
+            Guid actionId,
+            CancellationToken cancellationToken = default)
+        {
+            EnsureAuthenticated();
+
+            var template =
+                await _templateRepository.GetByIdForOrganizationAsync(
+                    templateId,
+                    _currentUser.OrganizationId,
+                    cancellationToken);
+
+            if (template is null)
+                throw new KeyNotFoundException("Template was not found.");
+
+            var version = template.Versions
+                .OrderByDescending(x => x.VersionNumber)
+                .FirstOrDefault();
+
+            if (version is null)
+                throw new InvalidOperationException(
+                    "The template does not contain a version.");
+
+            if (template.Status != TemplateStatus.Draft || version.IsPublished)
+                throw new InvalidOperationException(
+                    "Only a draft template version can be modified.");
+
+            var ruleSet = await _templateRoutingRuleSetRepository.GetByIdAsync(
+                ruleSetId, cancellationToken);
+
+            if (ruleSet is null || ruleSet.TemplateVersionId != version.Id)
+                throw new KeyNotFoundException("Routing rule set was not found.");
+
+            var rule = await _templateRoutingRuleRepository.GetByIdAsync(
+                ruleId, cancellationToken);
+
+            if (rule is null || rule.TemplateRoutingRuleSetId != ruleSetId)
+                throw new KeyNotFoundException("Routing rule was not found.");
+
+            var action = await _templateRoutingActionRepository.GetByIdAsync(
+                actionId, cancellationToken);
+
+            if (action is null || action.TemplateRoutingRuleId != ruleId)
+                throw new KeyNotFoundException("Routing action was not found.");
+
+            _templateRoutingActionRepository.Delete(action);
+
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+
+
     }
 }

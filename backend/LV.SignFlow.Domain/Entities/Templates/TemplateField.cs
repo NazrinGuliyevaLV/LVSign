@@ -26,6 +26,9 @@ namespace LV.SignFlow.Domain.Entities.Templates
         public decimal Height { get; set; }
 
         public bool IsRequired { get; set; } = true;
+        public string? Label { get; set; }
+
+        public string? OptionJson { get; set; }
 
 
         public TemplateDocument TemplateDocument { get; set; } = null!;
